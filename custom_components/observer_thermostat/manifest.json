@@ -1,0 +1,12 @@
+{
+  "domain": "observer_thermostat",
+  "name": "Observer Communicating Thermostat",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["http"],
+  "documentation": "https://github.com/aneisch/thermostat_api_server_docker",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/aneisch/thermostat_api_server_docker/issues",
+  "requirements": [],
+  "version": "1.1.0"
+}

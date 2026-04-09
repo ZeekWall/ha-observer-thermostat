@@ -1,0 +1,52 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Observer Communicating Thermostat",
+        "description": "Point your thermostat's Observer server address to {ip_hint} on the port configured below.",
+        "data": {
+          "thermostat_name": "Thermostat Name",
+          "thermostat_serial": "Thermostat Serial Number",
+          "server_port": "API Server Port"
+        },
+        "data_description": {
+          "thermostat_name": "Friendly name for this thermostat (e.g. Upstairs, Downstairs).",
+          "thermostat_serial": "The serial number printed on your thermostat (e.g. 5687J272316).",
+          "server_port": "Port the local API server listens on. The thermostat must be pointed at this IP and port. Default: 8080."
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "This thermostat serial is already configured."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "temperature": { "name": "Temperature" },
+      "humidity": { "name": "Humidity" },
+      "operating_mode": { "name": "Operating Mode" },
+      "fan_mode": { "name": "Fan Mode" },
+      "state": { "name": "State" },
+      "setpoint": { "name": "Setpoint" },
+      "fan_status": { "name": "Fan Status" },
+      "hold": { "name": "Hold" },
+      "filter_hours_remain": { "name": "Filter Hours Remaining" },
+      "outdoor_coil_temp": { "name": "Outdoor Coil Temperature" },
+      "outdoor_ambient_temp": { "name": "Outdoor Ambient Temperature" },
+      "indoor_cfm": { "name": "Indoor CFM" },
+      "equipment_event": { "name": "Active Equipment Event" },
+      "equipment_event_time": { "name": "Equipment Event Time" },
+      "last_communication": { "name": "Last Communication" },
+      "opstat": { "name": "Operating Status" }
+    },
+    "number": {
+      "hum_setpoint": { "name": "Humidification Setpoint" },
+      "dehum_setpoint": { "name": "Dehumidification Setpoint" },
+      "blight": { "name": "Backlight Brightness" },
+      "otmr": { "name": "Hold Override Timer" }
+    },
+    "switch": {
+      "scr_lockout": { "name": "Screen Lockout" }
+    }
+  }
+}
