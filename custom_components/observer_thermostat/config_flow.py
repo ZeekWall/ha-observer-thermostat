@@ -6,10 +6,17 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlow,
+)
+from homeassistant.core import callback
 from homeassistant.helpers import network
 
 from .const import (
+    CONF_CAPTURE_TO_FILE,
     CONF_SERVER_PORT,
     CONF_THERMOSTAT_NAME,
     CONF_THERMOSTAT_SERIAL,
@@ -23,6 +30,11 @@ class ObserverThermostatConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Observer Thermostat."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        return ObserverThermostatOptionsFlow()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -63,4 +75,26 @@ class ObserverThermostatConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=schema,
             description_placeholders={"ip_hint": ip_hint},
             errors=errors,
+        )
+
+
+class ObserverThermostatOptionsFlow(OptionsFlow):
+    """Options: traffic capture logging."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_CAPTURE_TO_FILE,
+                        default=self.config_entry.options.get(CONF_CAPTURE_TO_FILE, True),
+                    ): bool,
+                }
+            ),
         )

@@ -149,6 +149,13 @@ class ObserverClimateEntity(ClimateEntity):
         return self._data.cooling_setpoint
 
     @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose in-flight changes to make push problems visible."""
+        return {
+            "pending_changes": {k: p.value for k, p in self._data.desired.items()}
+        }
+
+    @property
     def fan_mode(self) -> str | None:
         return self._data.fan_mode
 
@@ -166,8 +173,7 @@ class ObserverClimateEntity(ClimateEntity):
 
     async def async_turn_on(self) -> None:
         """Restore the last non-off mode, defaulting to cool."""
-        last = self._data.candidate.get("mode", "cool")
-        self._data.set_mode(last if last != "off" else "cool")
+        self._data.set_mode(self._data.last_on_mode or "cool")
         self.async_write_ha_state()
 
     async def async_turn_off(self) -> None:
@@ -180,25 +186,35 @@ class ObserverClimateEntity(ClimateEntity):
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Handle both single-setpoint and dual-range (HEAT_COOL) temperature changes."""
+        data = self._data
+        if (hvac_mode := kwargs.get("hvac_mode")) is not None:
+            if mode := HVAC_TO_MODE.get(hvac_mode):
+                data.set_mode(mode)
+
         low = kwargs.get("target_temp_low")
         high = kwargs.get("target_temp_high")
         temp = kwargs.get(ATTR_TEMPERATURE)
+        changed = False
 
         if low is not None:
-            self._data.set_heat_setpoint(low)
-            if self._data.hold != "on":
-                self._data.set_hold("on")
-
+            data.set_heat_setpoint(low)
+            changed = True
         if high is not None:
-            self._data.set_cool_setpoint(high)
-            if self._data.hold != "on":
-                self._data.set_hold("on")
-
+            data.set_cool_setpoint(high)
+            changed = True
         if temp is not None:
-            self._data.set_temperature(temp)
-            # Auto-engage hold so the setpoint isn't overridden by the schedule
-            if self._data.hold != "on":
-                self._data.set_hold("on")
+            if data.set_temperature(temp):
+                changed = True
+            else:
+                _LOGGER.debug(
+                    "Ignoring single target temperature in mode %s; "
+                    "use the low/high range in heat_cool",
+                    data.mode,
+                )
+
+        # Hold stops the schedule from overriding the new setpoint
+        if changed and data.hold != "on":
+            data.set_hold("on")
 
         self.async_write_ha_state()
 

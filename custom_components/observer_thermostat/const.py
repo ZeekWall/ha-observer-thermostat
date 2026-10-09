@@ -5,6 +5,7 @@ DOMAIN = "observer_thermostat"
 CONF_THERMOSTAT_NAME = "thermostat_name"
 CONF_THERMOSTAT_SERIAL = "thermostat_serial"
 CONF_SERVER_PORT = "server_port"
+CONF_CAPTURE_TO_FILE = "capture_to_file"
 
 DEFAULT_PORT = 8080
 DEFAULT_NAME = "Thermostat"
@@ -54,6 +55,20 @@ MONITORED_KEYS = [
     KEY_IDUCFM, KEY_OAT, KEY_ODUCOILTMP,
 ]
 
-CHANGES_PENDING_TIMEOUT_SECONDS = 300  # 5 minutes
+# A change we pushed must show up in the thermostat's /status within this long,
+# otherwise it is re-pushed (up to MAX_PUSH_ATTEMPTS times, then dropped).
+CONFIRM_GRACE_SECONDS = 90
+MAX_PUSH_ATTEMPTS = 3
+
+# Fields we can set and expect the thermostat to echo back in /status.
+CONTROL_KEYS = ("mode", "fan", "hold", "htsp", "clsp")
+
+CAPTURE_RING_SIZE = 500
+CAPTURE_FILE_MAX_BYTES = 2 * 1024 * 1024
+CAPTURE_FILE_BACKUPS = 5
+CAPTURE_DIR_NAME = "observer_thermostat/captures"
+
+STORAGE_VERSION = 1
+STORAGE_SAVE_DELAY = 30
 
 SIGNAL_THERMOSTAT_UPDATE = f"{DOMAIN}_update"

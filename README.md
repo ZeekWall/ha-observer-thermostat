@@ -37,6 +37,15 @@ After setup, configure your router or local DNS to redirect the thermostat's clo
 
 ## Requirements
 
-- Home Assistant 2024.2.0 or newer
+- Home Assistant 2024.11.0 or newer
 - Observer Communicating Thermostat (TSTAT0201CW)
 - Ability to redirect thermostat traffic to your Home Assistant instance (router/DNS)
+
+## Troubleshooting
+
+The integration records the thermostat's requests and responses (serial number redacted):
+
+- **Download diagnostics** from the device page (Settings → Devices & Services → Observer Communicating Thermostat → device → ⋮ → Download diagnostics). It includes current state, in-flight changes, the latest payload from every endpoint, and the last 200 requests/responses.
+- Optionally, traffic is also written to `/config/observer_thermostat/captures/capture.jsonl` (size-limited, rotated). Toggle it under the integration's **Configure** options.
+
+Changes made from Home Assistant stay "pending" (shown in the climate entity's `pending_changes` attribute) until the thermostat reports the new value; unconfirmed changes are re-sent up to 3 times.

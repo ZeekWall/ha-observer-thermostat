@@ -22,31 +22,86 @@
   },
   "entity": {
     "sensor": {
-      "temperature": { "name": "Temperature" },
-      "humidity": { "name": "Humidity" },
-      "operating_mode": { "name": "Operating Mode" },
-      "fan_mode": { "name": "Fan Mode" },
-      "state": { "name": "State" },
-      "setpoint": { "name": "Setpoint" },
-      "fan_status": { "name": "Fan Status" },
-      "hold": { "name": "Hold" },
-      "filter_hours_remain": { "name": "Filter Hours Remaining" },
-      "outdoor_coil_temp": { "name": "Outdoor Coil Temperature" },
-      "outdoor_ambient_temp": { "name": "Outdoor Ambient Temperature" },
-      "indoor_cfm": { "name": "Indoor CFM" },
-      "equipment_event": { "name": "Active Equipment Event" },
-      "equipment_event_time": { "name": "Equipment Event Time" },
-      "last_communication": { "name": "Last Communication" },
-      "opstat": { "name": "Operating Status" }
+      "temperature": {
+        "name": "Temperature"
+      },
+      "humidity": {
+        "name": "Humidity"
+      },
+      "operating_mode": {
+        "name": "Operating Mode"
+      },
+      "fan_mode": {
+        "name": "Fan Mode"
+      },
+      "state": {
+        "name": "State"
+      },
+      "setpoint": {
+        "name": "Setpoint"
+      },
+      "fan_status": {
+        "name": "Fan Status"
+      },
+      "hold": {
+        "name": "Hold"
+      },
+      "filter_hours_remain": {
+        "name": "Filter Hours Remaining"
+      },
+      "outdoor_coil_temp": {
+        "name": "Outdoor Coil Temperature"
+      },
+      "outdoor_ambient_temp": {
+        "name": "Outdoor Ambient Temperature"
+      },
+      "indoor_cfm": {
+        "name": "Indoor CFM"
+      },
+      "equipment_event": {
+        "name": "Active Equipment Event"
+      },
+      "equipment_event_time": {
+        "name": "Equipment Event Time"
+      },
+      "last_communication": {
+        "name": "Last Communication"
+      },
+      "opstat": {
+        "name": "Operating Status"
+      }
     },
     "number": {
-      "hum_setpoint": { "name": "Humidification Setpoint" },
-      "dehum_setpoint": { "name": "Dehumidification Setpoint" },
-      "blight": { "name": "Backlight Brightness" },
-      "otmr": { "name": "Hold Override Timer" }
+      "hum_setpoint": {
+        "name": "Humidification Setpoint"
+      },
+      "dehum_setpoint": {
+        "name": "Dehumidification Setpoint"
+      },
+      "blight": {
+        "name": "Backlight Brightness"
+      },
+      "otmr": {
+        "name": "Hold Override Timer"
+      }
     },
     "switch": {
-      "scr_lockout": { "name": "Screen Lockout" }
+      "scr_lockout": {
+        "name": "Screen Lockout"
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Observer Thermostat options",
+        "data": {
+          "capture_to_file": "Log thermostat traffic to a file"
+        },
+        "data_description": {
+          "capture_to_file": "Writes every request/response to /config/observer_thermostat/captures/ (size-limited, rotated). Useful for troubleshooting; also available via Download diagnostics."
+        }
+      }
     }
   }
 }
