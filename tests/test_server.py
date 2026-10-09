@@ -497,3 +497,19 @@ def test_humidifier_support_follows_installer_setting():
     assert d.humidifier_supported is False
     d.dealer_config = {"cfghumid": "on"}
     assert d.humidifier_supported is True
+
+
+def test_rare_traffic_is_read_back_from_files_after_ring_rollover(tmp_path):
+    c = CaptureLog("S", maxlen=5)
+    c.start_file(str(tmp_path))
+    try:
+        _add(c, method="GET", path="/systems/S/weather", body="")
+        for i in range(30):  # routine polling that pushes the weather call out of the ring
+            _add(c, body=f"poll-{i}")
+        _add(c, path="/systems/S/history", body="<history/>")
+    finally:
+        c.stop_file()  # flushes the queue to disk
+    assert not any(e["path"].endswith("weather") for e in c.entries())  # gone from the ring
+    rare = c.rare_from_files()
+    assert [e["path"].rsplit("/", 1)[-1] for e in rare] == ["weather", "history"]
+    assert all("poll-" not in e["req_body"] for e in rare)

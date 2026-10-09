@@ -24,6 +24,8 @@ async def async_get_config_entry_diagnostics(
     def _redact(obj: Any) -> Any:
         return capture.redact(obj) if isinstance(obj, str) else obj
 
+    rare_traffic = await hass.async_add_executor_job(capture.rare_from_files)
+
     return {
         "entry": async_redact_data(dict(entry.data), TO_REDACT),
         "options": dict(entry.options),
@@ -81,4 +83,6 @@ async def async_get_config_entry_diagnostics(
         "config_echo_xml": capture.redact(data.echo_xml or ""),
         "program": data.program(),
         "captures": capture.entries(200),
+        # Everything that isn't routine polling, read back from the capture files
+        "rare_traffic": rare_traffic,
     }

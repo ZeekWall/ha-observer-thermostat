@@ -46,6 +46,7 @@ class CaptureLog:
         self._queue_handler: logging.handlers.QueueHandler | None = None
         self._listener: logging.handlers.QueueListener | None = None
         self._file_handler: logging.Handler | None = None
+        self._directory: str | None = None
 
     def redact(self, text: str) -> str:
         if not text:
@@ -115,6 +116,7 @@ class CaptureLog:
         if self._logger is not None:
             return
         os.makedirs(directory, exist_ok=True)
+        self._directory = directory
         handler = logging.handlers.RotatingFileHandler(
             os.path.join(directory, "capture.jsonl"),
             maxBytes=CAPTURE_FILE_MAX_BYTES,
@@ -132,6 +134,33 @@ class CaptureLog:
         self._listener.start()
         self._file_handler = handler
         self._logger = logger
+
+    def rare_from_files(self, limit: int = 300) -> list[dict[str, Any]]:
+        """Non-polling requests from the capture files, oldest first (blocking).
+
+        Survives restarts and the in-memory ring rolling over, so slow-timer
+        requests (weather, history, faults) are still there a day later.
+        """
+        if not self._directory:
+            return []
+        base = os.path.join(self._directory, "capture.jsonl")
+        paths = [f"{base}.{i}" for i in range(CAPTURE_FILE_BACKUPS, 0, -1)] + [base]
+        found: list[dict[str, Any]] = []
+        for path in paths:
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    lines = handle.readlines()
+            except OSError:
+                continue
+            for line in lines:
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                endpoint = str(entry.get("path", "")).rstrip("/").split("/")[-1].lower()
+                if endpoint not in CAPTURE_NOISY_ENDPOINTS:
+                    found.append(entry)
+        return found[-limit:]
 
     def stop_file(self) -> None:
         if self._logger is None:
