@@ -14,7 +14,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, UnitOfTemperature
+from homeassistant.const import PERCENTAGE, UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -330,6 +330,73 @@ SENSOR_DESCRIPTIONS: tuple[ObserverSensorDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
         value_fn=lambda d: d.config_number("reported", "day"),
+    ),
+    ObserverSensorDescription(
+        key="cooling_runtime_total",
+        name="Cooling Runtime (Lifetime)",
+        icon="mdi:clock-time-eight-outline",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.HOURS,
+        value_fn=lambda d: d.history_number("odu", "coolhours"),
+    ),
+    ObserverSensorDescription(
+        key="cooling_cycles_total",
+        name="Cooling Cycles (Lifetime)",
+        icon="mdi:sync",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: d.history_number("odu", "coolcycles"),
+    ),
+    ObserverSensorDescription(
+        key="odu_on_hours",
+        name="Outdoor Unit Powered-On Time",
+        icon="mdi:counter",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.HOURS,
+        entity_registry_enabled_default=False,
+        value_fn=lambda d: d.history_number("odu", "onhours"),
+    ),
+    ObserverSensorDescription(
+        key="odu_power_cycles",
+        name="Outdoor Unit Power Cycles",
+        icon="mdi:counter",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda d: d.history_number("odu", "powercycles"),
+    ),
+    ObserverSensorDescription(
+        key="odu_heat_hours",
+        name="Outdoor Unit Heating Runtime (Lifetime)",
+        icon="mdi:counter",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.HOURS,
+        entity_registry_enabled_default=False,
+        value_fn=lambda d: d.history_number("odu", "heathours"),
+    ),
+    ObserverSensorDescription(
+        key="odu_heat_cycles",
+        name="Outdoor Unit Heating Cycles (Lifetime)",
+        icon="mdi:counter",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda d: d.history_number("odu", "heatcycles"),
+    ),
+    ObserverSensorDescription(
+        key="odu_defrost_cycles",
+        name="Outdoor Unit Defrost Cycles",
+        icon="mdi:counter",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda d: d.history_number("odu", "defrostcycles"),
     ),
     # Operating status — raw value from thermostat, useful for diagnostics
     ObserverSensorDescription(

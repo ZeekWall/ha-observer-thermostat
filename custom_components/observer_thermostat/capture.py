@@ -158,8 +158,14 @@ class CaptureLog:
                 except ValueError:
                     continue
                 endpoint = str(entry.get("path", "")).rstrip("/").split("/")[-1].lower()
-                if endpoint not in CAPTURE_NOISY_ENDPOINTS:
-                    found.append(entry)
+                if endpoint in CAPTURE_NOISY_ENDPOINTS:
+                    continue
+                # Lines written by older versions may predate the masking rules
+                for field in ("path", "query", "req_body", "resp_body"):
+                    entry[field] = self.redact(str(entry.get(field, "")))
+                if endpoint == "dealer":
+                    entry["req_body"] = "REDACTED (dealer contact details)"
+                found.append(entry)
         return found[-limit:]
 
     def stop_file(self) -> None:

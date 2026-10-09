@@ -135,6 +135,8 @@ class ThermostatData:
         self.idu_config: dict[str, str] = {}
         self.odu_config: dict[str, str] = {}
         self.equipment_history: list[dict[str, str]] = []
+        # Lifetime counters: {"odu": {...}, "idu": {...}} from the daily /history report
+        self.history: dict[str, dict[str, str]] = {}
         self.raw_last: dict[str, Any] = {}
         self.firmware: str | None = None
         self.thermostat_ip: str | None = None
@@ -166,6 +168,7 @@ class ThermostatData:
             "idu_config": self.idu_config,
             "odu_config": self.odu_config,
             "equipment_history": self.equipment_history,
+            "history": self.history,
         }
 
     def load_store(self, stored: dict[str, Any] | None) -> None:
@@ -179,6 +182,7 @@ class ThermostatData:
         for name in ("profile", "dealer_config", "idu_config", "odu_config"):
             setattr(self, name, dict(stored.get(name) or {}))
         self.equipment_history = list(stored.get("equipment_history") or [])
+        self.history = {k: dict(v) for k, v in (stored.get("history") or {}).items()}
         if stored.get("echo_xml"):
             self.set_echo(stored["echo_xml"])
 
@@ -440,6 +444,13 @@ class ThermostatData:
 
     def config_number(self, source: str, key: str) -> float | None:
         return self._config_number(getattr(self, source), key)
+
+    def history_number(self, unit: str, key: str) -> float | None:
+        """A lifetime counter from the daily /history report (``odu`` or ``idu``)."""
+        try:
+            return float(self.history[unit][key])
+        except (KeyError, ValueError):
+            return None
 
     @property
     def humidifier_supported(self) -> bool | None:
@@ -831,6 +842,21 @@ class ObserverThermostatServer:
             if fw := received.get("firmware"):
                 self.data.firmware = fw
             self.data.raw_last[final] = received
+            self.data._persist()
+            self._update_callback()
+            return web.Response(status=200)
+
+        if final == "history":
+            try:
+                root = ET.fromstring(body)
+                self.data.history = {
+                    unit: {c.tag: (c.text or "").strip() for c in section}
+                    for unit in ("odu", "idu")
+                    if (section := root.find(unit)) is not None
+                }
+            except ET.ParseError:
+                pass
+            self.data.raw_last[final] = body
             self.data._persist()
             self._update_callback()
             return web.Response(status=200)

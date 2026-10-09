@@ -36,7 +36,7 @@ still being delivered.
 
 | Platform | Entities |
 |---|---|
-| Sensor | Temperature, Humidity, Operating Mode, Fan Mode, State, Setpoint, Fan Status, Hold, **Hold Until**, **Next Schedule Change** (time, with the heat/cool setpoints as attributes), **Equipment Stage**, Filter Life Remaining, Outdoor Ambient/Coil Temperature, Indoor CFM, Operating Status, Active Equipment Event (+ time), **Last Fault** (full fault history in its attributes), Last Communication, Outdoor/Indoor Unit Type, Inducer RPM, Schedule Period |
+| Sensor | Temperature, Humidity, Operating Mode, Fan Mode, State, Setpoint, Fan Status, Hold, **Hold Until**, **Next Schedule Change** (time, with the heat/cool setpoints as attributes), **Equipment Stage**, Filter Life Remaining, Outdoor Ambient/Coil Temperature, Indoor CFM, Operating Status, Active Equipment Event (+ time), **Last Fault** (full fault history in its attributes), **Cooling Runtime / Cycles (Lifetime)** (daily lifetime counters from the outdoor unit; use them with a utility meter for compressor runtime per day), Last Communication, Outdoor/Indoor Unit Type, Inducer RPM, Schedule Period |
 | Diagnostic sensors (disabled by default) | Deadband, Changeover Setting, Cool/Heat Lockout Setting, Room Temperature Offset, Filter Interval, Indoor/Outdoor Unit Capacity, Indoor Unit Stages, Service Level, Schedule Day — read from the installer configuration the thermostat reports; shown raw |
 | Binary sensor | Filter Service Needed, Indoor Unit Lockout |
 | Number | Backlight Brightness (%), **Hold Duration**; Humidification / Dehumidification Setpoint (disabled by default; humidification is unavailable when the installer settings say humidity control is off) |

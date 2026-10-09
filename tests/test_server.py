@@ -513,3 +513,32 @@ def test_rare_traffic_is_read_back_from_files_after_ring_rollover(tmp_path):
     rare = c.rare_from_files()
     assert [e["path"].rsplit("/", 1)[-1] for e in rare] == ["weather", "history"]
     assert all("poll-" not in e["req_body"] for e in rare)
+
+
+HISTORY = ("<history><idu><powercycles>0</powercycles><heatcycles>2752553</heatcycles></idu>"
+           "<odu><powercycles>20</powercycles><coolcycles>72298</coolcycles><onhours>90383</onhours>"
+           "<coolhours>22395</coolhours><heathours>0</heathours></odu></history>")
+
+
+async def test_history_counters_are_kept_per_unit_and_persisted(env):
+    data, _, tstat, _ = env
+    assert await tstat.post("history", "data=" + HISTORY) == 200
+    assert data.history_number("odu", "coolhours") == 22395
+    assert data.history_number("odu", "coolcycles") == 72298
+    assert data.history_number("idu", "heatcycles") == 2752553  # kept, though implausible
+    assert data.history_number("odu", "nope") is None
+    fresh = ThermostatData(SERIAL, "h")
+    fresh.load_store(data.to_store())
+    assert fresh.history_number("odu", "onhours") == 90383
+
+
+def test_old_capture_lines_are_masked_when_read_back(tmp_path):
+    import json
+    old = {"ts": "t", "method": "POST", "path": "/systems/S/profile", "query": "", "remote": None, "headers": {},
+           "req_body": "<system_profile><pin>9B71D7</pin></system_profile>", "status": 200, "resp_body": ""}
+    dealer = dict(old, path="/systems/S/dealer", req_body="<dealer><name>ACME</name><phone>555</phone></dealer>")
+    (tmp_path / "capture.jsonl").write_text(json.dumps(old) + "\n" + json.dumps(dealer) + "\n")
+    c = CaptureLog("S")
+    c._directory = str(tmp_path)
+    text = json.dumps(c.rare_from_files())
+    assert "9B71D7" not in text and "ACME" not in text and "555" not in text

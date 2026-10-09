@@ -44,7 +44,9 @@ config echo (below). A command not delivered within 3 minutes is dropped.
 | `POST …/odu_status`, `…/idu_status` | Outdoor/indoor unit telemetry. | Confirmed |
 | `POST …/equipment_events` | Fault/event history list. | Confirmed |
 | `POST …/profile`, `…/dealer`, `…/dealer_config`, `…/idu_config`, `…/odu_config` | Identity and installer configuration, sent on connect. Read-only here. | Confirmed |
-| `GET …/weather`, `POST …/history`, `…/idu_faults`, `…/odu_faults`, utility events | Advertised by the ping rates below; not yet observed. | Unverified |
+| `POST …/history` | Daily lifetime counters (see below). | Confirmed |
+| `POST …/idu_faults`, `…/odu_faults` | Fault lists. On the observed unit the entries are inconsistent (codes do not match descriptions; repeated blocks), so they are captured but not interpreted. | Confirmed, unreliable |
+| `GET …/weather`, utility events | Advertised by the ping rates below; not yet observed. | Unverified |
 
 Ping rates we advertise in the `/status` reply: weather 14400 s, history 86400 s,
 IDU faults 86400 s, ODU faults 86400 s, IDU status 300 s, equipment events 60 s.
@@ -76,6 +78,16 @@ Flattened `<status>` (zone 1 fields live under `<zones><zone id="1">`):
   `maxheatstage`. `opstat` appears twice, the second time blank; keep the first value.
 * `idu_status`: `idutype` (e.g. `furnace2stg`), `iducfm`, `blwrpm`, `inducerrpm`,
   `lockoutactive`, `lockouttime`.
+
+## `history`
+
+Lifetime counters, sent about once a day: `<history><odu>` with `powercycles`, `defrostcycles`,
+`coolcycles`, `heatcycles`, `onhours`, `defrosthours`, `coolhours`, `heathours`, and `<idu>`
+with `powercycles`, `blowercycles`, `heatcycles`, `onhours`, `blowerhours`, `heathours`.
+Observed ODU values are plausible for a ~10-year-old air conditioner (about 22,000 cooling
+hours over ~72,000 cycles, about 90,000 powered-on hours); the IDU values were not
+(0 hours, 2.7 million heat cycles), so only the ODU counters are exposed as sensors.
+Resolution is whole hours.
 
 ## `equipment_events`
 
