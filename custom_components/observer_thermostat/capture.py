@@ -12,6 +12,7 @@ import logging
 import logging.handlers
 import os
 import queue
+import re
 import time
 from collections import deque
 from itertools import count
@@ -27,6 +28,10 @@ from .const import (
 
 _SAFE_HEADERS = ("content-type", "content-length", "user-agent", "host")
 _ids = count()
+# Installer/owner details that appear in thermostat payloads
+_SENSITIVE_TAGS = re.compile(
+    r"<(pin|phone|email|street1|street2|scrLockoutCode)>[^<]*</\1>"
+)
 
 
 class CaptureLog:
@@ -43,9 +48,11 @@ class CaptureLog:
         self._file_handler: logging.Handler | None = None
 
     def redact(self, text: str) -> str:
-        if self._serial and text:
-            return text.replace(self._serial, "<SERIAL>")
-        return text
+        if not text:
+            return text
+        if self._serial:
+            text = text.replace(self._serial, "<SERIAL>")
+        return _SENSITIVE_TAGS.sub(r"<\1>REDACTED</\1>", text)
 
     def add(
         self,
@@ -60,6 +67,8 @@ class CaptureLog:
         resp_body: str,
     ) -> None:
         endpoint = path.rstrip("/").split("/")[-1].lower()
+        if endpoint == "dealer":  # installer name/phone/address: never record
+            req_body = "REDACTED (dealer contact details)"
         noisy_key = (method, endpoint)
         now = time.monotonic()
         if endpoint in CAPTURE_NOISY_ENDPOINTS:

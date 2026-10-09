@@ -35,6 +35,7 @@ class ObserverSensorDescription(SensorEntityDescription):
     """Extends SensorEntityDescription with a value accessor."""
 
     value_fn: Callable[[ThermostatData], Any]
+    attrs_fn: Callable[[ThermostatData], dict[str, Any] | None] | None = None
 
 
 SENSOR_DESCRIPTIONS: tuple[ObserverSensorDescription, ...] = (
@@ -190,6 +191,146 @@ SENSOR_DESCRIPTIONS: tuple[ObserverSensorDescription, ...] = (
         icon="mdi:timer-sand",
         value_fn=lambda d: d.hold_end_text,
     ),
+    ObserverSensorDescription(
+        key="last_fault",
+        name="Last Fault",
+        icon="mdi:alert-circle-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: d.last_fault_text,
+        attrs_fn=lambda d: (
+            {
+                "code": d.equipment_history[0].get("code"),
+                "equipment": d.equipment_history[0].get("equip"),
+                "occurrences": d.equipment_history[0].get("occurrences"),
+                "time": d.equipment_history[0].get("time"),
+                "history": [
+                    {
+                        k: e.get(k)
+                        for k in ("description", "code", "equip", "source", "occurrences", "time", "active")
+                    }
+                    for e in d.equipment_history
+                ],
+            }
+            if d.equipment_history
+            else None
+        ),
+    ),
+    ObserverSensorDescription(
+        key="next_schedule_change",
+        name="Next Schedule Change",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        icon="mdi:calendar-arrow-right",
+        value_fn=lambda d: (c := d.next_schedule_change()) and c[0],
+        attrs_fn=lambda d: (
+            {"heat_setpoint": c[1], "cool_setpoint": c[2], "period": c[3]}
+            if (c := d.next_schedule_change())
+            else None
+        ),
+    ),
+    ObserverSensorDescription(
+        key="equipment_stage",
+        name="Equipment Stage",
+        icon="mdi:numeric",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: d.equipment_stage,
+        attrs_fn=lambda d: {
+            "min_cool_stage": d.reported.get("mincoolstage"),
+            "max_cool_stage": d.reported.get("maxcoolstage"),
+            "min_heat_stage": d.reported.get("minheatstage"),
+            "max_heat_stage": d.reported.get("maxheatstage"),
+        },
+    ),
+    ObserverSensorDescription(
+        key="deadband",
+        name="Deadband",
+        icon="mdi:cog-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        native_unit_of_measurement="°F",
+        value_fn=lambda d: d.config_number("dealer_config", "cfgdead"),
+    ),
+    ObserverSensorDescription(
+        key="changeover",
+        name="Changeover Setting",
+        icon="mdi:cog-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda d: d.config_number("dealer_config", "cfgchgover"),
+    ),
+    ObserverSensorDescription(
+        key="cool_lockout",
+        name="Cool Lockout Setting",
+        icon="mdi:cog-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda d: d.config_number("dealer_config", "lascoollckout"),
+    ),
+    ObserverSensorDescription(
+        key="heat_lockout",
+        name="Heat Lockout Setting",
+        icon="mdi:cog-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda d: d.config_number("dealer_config", "lasheatlckout"),
+    ),
+    ObserverSensorDescription(
+        key="temp_offset",
+        name="Room Temperature Offset",
+        icon="mdi:cog-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        native_unit_of_measurement="°F",
+        value_fn=lambda d: d.config_number("dealer_config", "tempoffset"),
+    ),
+    ObserverSensorDescription(
+        key="filter_interval",
+        name="Filter Interval",
+        icon="mdi:air-filter",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        native_unit_of_measurement="h",
+        value_fn=lambda d: d.config_number("dealer_config", "filterinterval"),
+    ),
+    ObserverSensorDescription(
+        key="indoor_capacity",
+        name="Indoor Unit Capacity",
+        icon="mdi:cog-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda d: d.config_number("profile", "iducapacity"),
+    ),
+    ObserverSensorDescription(
+        key="outdoor_capacity",
+        name="Outdoor Unit Capacity",
+        icon="mdi:cog-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda d: d.config_number("profile", "oducapacity"),
+    ),
+    ObserverSensorDescription(
+        key="indoor_stages",
+        name="Indoor Unit Stages",
+        icon="mdi:cog-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda d: d.config_number("profile", "idustages"),
+    ),
+    ObserverSensorDescription(
+        key="service_level",
+        name="Service Level",
+        icon="mdi:cog-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda d: d.config_number("reported", "servicelvl"),
+    ),
+    ObserverSensorDescription(
+        key="schedule_day",
+        name="Schedule Day",
+        icon="mdi:calendar",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda d: d.config_number("reported", "day"),
+    ),
     # Operating status — raw value from thermostat, useful for diagnostics
     ObserverSensorDescription(
         key="opstat",
@@ -242,3 +383,8 @@ class ObserverSensorEntity(ObserverEntity, SensorEntity):
     @property
     def native_value(self) -> Any:
         return self.entity_description.value_fn(self._data)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        attrs_fn = self.entity_description.attrs_fn
+        return attrs_fn(self._data) if attrs_fn else None

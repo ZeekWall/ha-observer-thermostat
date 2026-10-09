@@ -426,3 +426,65 @@ async def test_hold_from_ha_gets_fresh_end_time_even_if_old_echo_has_none(env):
     await tstat.poll()
     assert zone_of(tstat.last_config).findtext("otmr") == "22:15"
     assert data.hold_end_text in ("Unknown", "22:15")
+
+
+# ── extra data: schedule, stage, history, installer config, redaction ──
+
+
+async def test_next_schedule_change_and_wraparound(env):
+    data, tstat = await with_echo(env)
+    when, heat, cool, number = data.next_schedule_change()
+    assert (when.hour, when.minute, heat, cool, number) == (22, 30, 60, 64, 4)
+    late = THURSDAY_2059.replace(hour=22, minute=45)
+    when, _, _, number = data.next_schedule_change(late)
+    assert (when.day, when.hour, when.minute, number) == (9, 6, 30, 1)  # tomorrow's first period
+    assert ThermostatData(SERIAL, "h").next_schedule_change() is None  # no schedule known
+
+
+async def test_equipment_stage_from_opstat(env):
+    data, _, tstat, _ = env
+    for opstat, stage in (("off", 0), ("stage 2", 2), ("heat stage 3", 3), ("", None)):
+        data.reported["opstat"] = opstat
+        assert data.equipment_stage == stage
+
+
+EVENTS = (
+    "<equipment_events><events>"
+    "<event id='1'><source>idu</source><equip>FN</equip><code>45</code><description>Hardware fault</description>"
+    "<localtime>  7/18/26 12:07AM</localtime><occurrences>0</occurrences><active>off</active></event>"
+    "<event id='2'><source>odu</source><equip>AC</equip><code>7</code><description>Comm Error - OD Unit</description>"
+    "<localtime>  4/20/21  9:49AM</localtime><occurrences>2</occurrences><active>off</active></event>"
+    "</events></equipment_events>"
+)
+
+
+async def test_full_fault_history_is_kept(env):
+    data, _, tstat, _ = env
+    await tstat.post("equipment_events", "data=" + EVENTS)
+    assert [e["code"] for e in data.equipment_history] == ["45", "7"]
+    assert data.last_fault_text == "Hardware fault"
+    assert data.equipment_history[0]["time"].startswith("2026-07-18T00:07")
+    assert data.latest_equip_description == "No Active Event"  # none active
+
+
+async def test_installer_config_stored_limits_and_persisted(env):
+    data, _, tstat, _ = env
+    await tstat.post("dealer_config", "data=<dealer_config><minclsp>52</minclsp><maxhtsp>88</maxhtsp>"
+                                      "<cfgdead>2</cfgdead><zones><zone id='1'><tempoffset>-1</tempoffset></zone></zones></dealer_config>")
+    await tstat.post("profile", "data=<system_profile><firmware>FW1</firmware><idustages>2</idustages></system_profile>")
+    assert (data.min_setpoint, data.max_setpoint) == (52, 88)
+    assert data.config_number("dealer_config", "tempoffset") == -1
+    assert data.config_number("profile", "idustages") == 2
+    assert data.firmware == "FW1"
+    fresh = ThermostatData(SERIAL, "h")
+    fresh.load_store(data.to_store())
+    assert (fresh.min_setpoint, fresh.max_setpoint, fresh.firmware) == (52, 88, "FW1")
+
+
+async def test_sensitive_details_are_masked_in_captures(env):
+    _, _, tstat, capture = env
+    await tstat.post("profile", "data=<system_profile><pin>9B71D7</pin><model>X</model></system_profile>")
+    await tstat.post("dealer", "data=<dealer><name>ACME HVAC</name><phone>555-0100</phone></dealer>")
+    bodies = " ".join(e["req_body"] for e in capture.entries())
+    assert "9B71D7" not in bodies and "ACME" not in bodies and "555-0100" not in bodies
+    assert "<model>X</model>" in bodies  # non-sensitive content survives

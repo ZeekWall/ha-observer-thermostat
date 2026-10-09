@@ -29,13 +29,15 @@ HA every few seconds.
 ## Entities
 
 **Climate** — modes Off, Cool, Heat, Heat/Cool (the thermostat's *Auto*), fan Auto/Low,
-presets *Schedule* and *Hold*, and a setpoint or low/high range. Changing a setpoint starts
+presets *Schedule* and *Hold*, and a setpoint or low/high range limited to the thermostat's
+own installer limits (for example 52–88 °F). Changing a setpoint starts
 a hold, exactly like using the thermostat. The `pending_changes` attribute shows anything
 still being delivered.
 
 | Platform | Entities |
 |---|---|
-| Sensor | Temperature, Humidity, Operating Mode, Fan Mode, State, Setpoint, Fan Status, Hold, **Hold Until**, Filter Life Remaining, Outdoor Ambient/Coil Temperature, Indoor CFM, Operating Status, Active Equipment Event (+ time), Last Communication, Outdoor/Indoor Unit Type, Inducer RPM, Schedule Period |
+| Sensor | Temperature, Humidity, Operating Mode, Fan Mode, State, Setpoint, Fan Status, Hold, **Hold Until**, **Next Schedule Change** (time, with the heat/cool setpoints as attributes), **Equipment Stage**, Filter Life Remaining, Outdoor Ambient/Coil Temperature, Indoor CFM, Operating Status, Active Equipment Event (+ time), **Last Fault** (full fault history in its attributes), Last Communication, Outdoor/Indoor Unit Type, Inducer RPM, Schedule Period |
+| Diagnostic sensors (disabled by default) | Deadband, Changeover Setting, Cool/Heat Lockout Setting, Room Temperature Offset, Filter Interval, Indoor/Outdoor Unit Capacity, Indoor Unit Stages, Service Level, Schedule Day — read from the installer configuration the thermostat reports; shown raw |
 | Binary sensor | Filter Service Needed, Indoor Unit Lockout |
 | Number | Backlight Brightness (%), Humidification / Dehumidification Setpoint, **Hold Duration** |
 | Switch | Screen Lockout, **Indefinite Hold** |
@@ -61,6 +63,7 @@ than applied later. The thermostat's own schedule is never modified.
 * **Download diagnostics** from the device page. It contains current state, in-flight
   changes, the latest payload of every endpoint, the config the thermostat last reported,
   and recent requests/responses (serial redacted).
+* PIN, lockout code and installer contact details are masked in captures and diagnostics.
 * Traffic is also written to `/config/observer_thermostat/captures/capture.jsonl`
   (size-limited and rotated). Turn this off under the integration's **Configure** options.
 * Enable debug logging for `custom_components.observer_thermostat` for per-request detail.

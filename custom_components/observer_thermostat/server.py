@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import datetime
 import logging
+import re
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -129,6 +130,11 @@ class ThermostatData:
         self._echo_root: ET.Element | None = None
 
         self.profile: dict[str, str] = {}
+        # Installer/system configuration the thermostat reports when it connects
+        self.dealer_config: dict[str, str] = {}
+        self.idu_config: dict[str, str] = {}
+        self.odu_config: dict[str, str] = {}
+        self.equipment_history: list[dict[str, str]] = []
         self.raw_last: dict[str, Any] = {}
         self.firmware: str | None = None
         self.thermostat_ip: str | None = None
@@ -155,6 +161,11 @@ class ThermostatData:
             "last_known": self.last_known,
             "firmware": self.firmware,
             "echo_xml": self.echo_xml,
+            "profile": self.profile,
+            "dealer_config": self.dealer_config,
+            "idu_config": self.idu_config,
+            "odu_config": self.odu_config,
+            "equipment_history": self.equipment_history,
         }
 
     def load_store(self, stored: dict[str, Any] | None) -> None:
@@ -165,6 +176,9 @@ class ThermostatData:
         self.last_on_mode = stored.get("last_on_mode", self.last_on_mode)
         self.last_known = dict(stored.get("last_known", {}))
         self.firmware = stored.get("firmware", self.firmware)
+        for name in ("profile", "dealer_config", "idu_config", "odu_config"):
+            setattr(self, name, dict(stored.get(name) or {}))
+        self.equipment_history = list(stored.get("equipment_history") or [])
         if stored.get("echo_xml"):
             self.set_echo(stored["echo_xml"])
 
@@ -231,25 +245,60 @@ class ThermostatData:
                 return zone
         return None
 
-    def program(self) -> dict[int, list[int]]:
-        """Schedule as ``{day id: [period start, in minutes after midnight]}``."""
+    def schedule(self) -> dict[int, list[tuple[int, int | None, int | None]]]:
+        """Schedule as ``{day id: [(start minute, heat, cool), …]}``, Sunday = 1."""
         zone = self._echo_zone()
-        out: dict[int, list[int]] = {}
+        out: dict[int, list[tuple[int, int | None, int | None]]] = {}
         if zone is None:
             return out
+
+        def _int(text: str | None) -> int | None:
+            try:
+                return int(float(text or ""))
+            except ValueError:
+                return None
+
         for day in zone.iterfind("program/day"):
-            starts = []
+            periods = []
             for period in day.iterfind("period"):
                 try:
                     hh, mm = (period.findtext("time") or "").split(":")
-                    starts.append(int(hh) * 60 + int(mm))
+                    start = int(hh) * 60 + int(mm)
                 except ValueError:
                     continue
+                periods.append((start, _int(period.findtext("htsp")), _int(period.findtext("clsp"))))
             try:
-                out[int(day.get("id", ""))] = sorted(starts)
+                out[int(day.get("id", ""))] = sorted(periods)
             except ValueError:
                 continue
         return out
+
+    def program(self) -> dict[int, list[int]]:
+        """Schedule period start times as ``{day id: [minutes after midnight]}``."""
+        return {day: [p[0] for p in periods] for day, periods in self.schedule().items()}
+
+    def next_schedule_change(
+        self, now: datetime.datetime | None = None
+    ) -> tuple[datetime.datetime, int | None, int | None, int] | None:
+        """(when, heat, cool, period number) of the next scheduled setpoint change."""
+        now = now or self.clock()
+        schedule = self.schedule()
+        if not schedule:
+            return None
+        today = (now.weekday() + 1) % 7 + 1
+        now_min = now.hour * 60 + now.minute
+        for number, (start, heat, cool) in enumerate(schedule.get(today, []), 1):
+            if start > now_min:
+                when = now.replace(hour=start // 60, minute=start % 60, second=0, microsecond=0)
+                return when, heat, cool, number
+        tomorrow = schedule.get(today % 7 + 1, [])
+        if tomorrow:
+            start, heat, cool = tomorrow[0]
+            when = (now + datetime.timedelta(days=1)).replace(
+                hour=start // 60, minute=start % 60, second=0, microsecond=0
+            )
+            return when, heat, cool, 1
+        return None
 
     # ── Reads ──────────────────────────────────────────────────────
 
@@ -362,6 +411,39 @@ class ThermostatData:
     @property
     def opstat(self) -> str | None:
         return self.reported.get("opstat")
+
+    @property
+    def equipment_stage(self) -> int | None:
+        """Active equipment stage from the outdoor unit (0 = off)."""
+        opstat = self.reported.get("opstat")
+        if not opstat:
+            return None
+        if opstat == "off":
+            return 0
+        match = re.search(r"(\d+)", opstat)
+        return int(match.group(1)) if match else None
+
+    @property
+    def min_setpoint(self) -> float | None:
+        return self._config_number(self.dealer_config, "minclsp")
+
+    @property
+    def max_setpoint(self) -> float | None:
+        return self._config_number(self.dealer_config, "maxhtsp")
+
+    @staticmethod
+    def _config_number(config: dict[str, str], key: str) -> float | None:
+        try:
+            return float(config[key])
+        except (KeyError, ValueError):
+            return None
+
+    def config_number(self, source: str, key: str) -> float | None:
+        return self._config_number(getattr(self, source), key)
+
+    @property
+    def last_fault_text(self) -> str | None:
+        return self.equipment_history[0].get("description") if self.equipment_history else None
 
     @property
     def hold_end_text(self) -> str:
@@ -736,12 +818,19 @@ class ObserverThermostatServer:
             return web.Response(status=200)
 
         if final == "equipment_events":
-            return self._handle_equipment_events(received)
+            return self._handle_equipment_events(received, body)
 
         if final == "profile":
             self.data.profile = received
             if fw := received.get("firmware"):
                 self.data.firmware = fw
+            self.data.raw_last[final] = received
+            self.data._persist()
+            self._update_callback()
+            return web.Response(status=200)
+
+        if final in ("dealer_config", "idu_config", "odu_config"):
+            setattr(self.data, final, received)
             self.data.raw_last[final] = received
             self.data._persist()
             self._update_callback()
@@ -804,8 +893,25 @@ class ObserverThermostatServer:
             return self._xml_response(self._status_xml(config_has_changes="on"))
         return self._xml_response(self._status_xml())
 
-    def _handle_equipment_events(self, received: dict[str, str]) -> web.Response:
+    def _parse_events(self, body: str) -> list[dict[str, str]]:
+        """Every event in an /equipment_events payload, newest first."""
+        try:
+            root = ET.fromstring(body)
+        except ET.ParseError:
+            return []
+        tz = self.data.clock().tzinfo
+        events = []
+        for event in root.iter("event"):
+            item = {c.tag: (c.text or "").strip() for c in event}
+            when = parse_event_time(item.get("localtime", ""), tz)
+            item["time"] = when.isoformat() if when else ""
+            events.append(item)
+        return events
+
+    def _handle_equipment_events(self, received: dict[str, str], body: str) -> web.Response:
         """Handle /equipment_events POST (first event is the most recent)."""
+        if events := self._parse_events(body):
+            self.data.equipment_history = events
         if received.get("active") == "on":
             self.data.latest_equip_description = received.get("description", "Unknown event")
             self.data.latest_equip_time = parse_event_time(

@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 
-TO_REDACT = {"thermostat_serial", "serial"}
+TO_REDACT = {"thermostat_serial", "serial", "pin", "phone", "email", "street1", "street2", "scrLockoutCode", "name"}
 
 
 async def async_get_config_entry_diagnostics(
@@ -42,17 +42,43 @@ async def async_get_config_entry_diagnostics(
             }
             for k, p in data.desired.items()
         },
-        "stored": async_redact_data(data.to_store(), TO_REDACT),
-        "profile": {k: _redact(v) for k, v in data.profile.items()},
+        "stored": async_redact_data(
+            {
+                k: v
+                for k, v in data.to_store().items()
+                if k
+                not in (
+                    "echo_xml",
+                    "profile",
+                    "dealer_config",
+                    "idu_config",
+                    "odu_config",
+                    "equipment_history",
+                )  # reported in their own sections
+            },
+            TO_REDACT,
+        ),
+        "profile": async_redact_data(
+            {k: _redact(v) for k, v in data.profile.items()}, TO_REDACT
+        ),
+        "dealer_config": data.dealer_config,
+        "idu_config": data.idu_config,
+        "odu_config": data.odu_config,
+        "equipment_history": data.equipment_history,
+        "next_schedule_change": (
+            str(data.next_schedule_change()) if data.next_schedule_change() else None
+        ),
         "raw_last": {
             ep: (
-                {k: _redact(v) for k, v in payload.items()}
+                async_redact_data(
+                    {k: _redact(v) for k, v in payload.items()}, TO_REDACT
+                )
                 if isinstance(payload, dict)
                 else _redact(payload)
             )
             for ep, payload in data.raw_last.items()
         },
-        "config_echo_xml": data.echo_xml,
+        "config_echo_xml": capture.redact(data.echo_xml or ""),
         "program": data.program(),
         "captures": capture.entries(200),
     }

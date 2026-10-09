@@ -72,8 +72,6 @@ class ObserverClimateEntity(ObserverEntity, ClimateEntity):
     _attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
     _attr_hvac_modes = [HVACMode.OFF, HVACMode.COOL, HVACMode.HEAT, HVACMode.HEAT_COOL]
     _attr_fan_modes = FAN_MODES
-    _attr_min_temp = MIN_TEMP
-    _attr_max_temp = MAX_TEMP
     _attr_target_temperature_step = 1
     _attr_preset_modes = [PRESET_SCHEDULE, PRESET_HOLD]
     _attr_supported_features = (
@@ -90,6 +88,14 @@ class ObserverClimateEntity(ObserverEntity, ClimateEntity):
         self._attr_unique_id = serial
 
     # ── State properties ───────────────────────────────────────────
+
+    @property
+    def min_temp(self) -> float:
+        return self._data.min_setpoint or MIN_TEMP
+
+    @property
+    def max_temp(self) -> float:
+        return self._data.max_setpoint or MAX_TEMP
 
     @property
     def current_temperature(self) -> float | None:
