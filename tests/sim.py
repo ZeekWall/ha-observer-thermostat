@@ -2,7 +2,9 @@
 
 Behaviour modelled on captures of the real unit:
 * polls ``POST /status`` and, if told ``configHasChanges=on``, GETs ``/config``;
-* after applying a config it POSTs its full config to ``/systems/<serial>``;
+* after applying a pushed config it POSTs ``/notifications`` listing what changed;
+  it only POSTs its full config to ``/systems/<serial>`` after *local* changes
+  (``post_echo``) and when it connects;
 * setpoints only exist in that config while a hold is on;
 * a hold whose ``otmr`` is empty or not later than the thermostat's clock
   expires immediately (the reported "changes don't stick" bug).
@@ -38,6 +40,7 @@ class FakeThermostat:
             **state,
         }
         self.otmr = ""
+        self.mode_setting = self.status["mode"]  # /status reports the *resolved* mode
         self.top = {
             "timeFormat": "12", "dst": "on", "volume": "high", "soundType": "click",
             "scrLockout": "off", "scrLockoutCode": "0000",
@@ -78,13 +81,39 @@ class FakeThermostat:
         async with self.session.get(f"{self.base}/systems/{SERIAL}/config") as resp:
             self.last_config_xml = await resp.text()
         self.last_config = ET.fromstring(self.last_config_xml)
+        before = (dict(self.status), dict(self.top), self.mode_setting)
         self._apply(self.last_config)
-        await self.post_echo()
+        await self.post_notification(self._change_ids(before))
+
+    def _change_ids(self, before) -> list[str]:
+        status, top, mode = before
+        ids = []
+        if mode != self.mode_setting:
+            ids.append("op_mode")
+        if status["fan"] != self.status["fan"]:
+            ids.append("continuous_fan")
+        if any(status[k] != self.status[k] for k in ("hold", "htsp", "clsp")):
+            ids.append("zone_hold")
+        if top != self.top:
+            ids.append("settings")
+        return ids
+
+    async def post_notification(self, change_ids: list[str]) -> None:
+        changes = "".join(f"<change id='{i}'/>" for i in change_ids)
+        xml = (f"<notifications><notification><type>confirmation</type><code>200</code>"
+               f"<message>System settings updated</message><changes>{changes}</changes>"
+               f"</notification></notifications>")
+        await self.post("notifications", xml)
+
+    def set_mode_setting(self, mode: str) -> None:
+        self.mode_setting = mode
+        self.status["mode"] = "cool" if mode == "auto" else mode
 
     def _apply(self, config: ET.Element) -> None:
-        for key in ("mode", "fan"):
-            if key not in self.reject and config.findtext(key):
-                self.status[key] = config.findtext(key)
+        if "mode" not in self.reject and config.findtext("mode"):
+            self.set_mode_setting(config.findtext("mode"))
+        if "fan" not in self.reject and config.findtext("fan"):
+            self.status["fan"] = config.findtext("fan")
         for key in self.top:
             if key not in self.reject and config.findtext(key) is not None:
                 self.top[key] = config.findtext(key)
@@ -120,7 +149,7 @@ class FakeThermostat:
         )
         top = "".join(f"<{k}>{v}</{k}>" for k, v in self.top.items())
         return (
-            f"<system version='1.7'><config><mode>{self.status['mode']}</mode>"
+            f"<system version='1.7'><config><mode>{self.mode_setting}</mode>"
             f"<fan>{self.status['fan']}</fan><zones><zone id='1'><name>Zone 1</name>"
             f"<hold>{self.status['hold']}</hold>{setpoints}<program>{days}</program></zone>"
             f"<zone id='2'/></zones>{top}</config></system>"

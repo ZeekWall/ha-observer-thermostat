@@ -14,7 +14,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, UnitOfTemperature, UnitOfTime
+from homeassistant.const import PERCENTAGE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -100,11 +100,10 @@ SENSOR_DESCRIPTIONS: tuple[ObserverSensorDescription, ...] = (
     ),
     ObserverSensorDescription(
         key="filter_hours_remain",
-        name="Filter Hours Remaining",
-        device_class=SensorDeviceClass.DURATION,
+        name="Filter Life Remaining",
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=UnitOfTime.HOURS,
-        icon="mdi:clock",
+        native_unit_of_measurement=PERCENTAGE,
+        icon="mdi:air-filter",
         value_fn=lambda d: d.filter_hours_remain,
     ),
     ObserverSensorDescription(
@@ -154,6 +153,42 @@ SENSOR_DESCRIPTIONS: tuple[ObserverSensorDescription, ...] = (
         icon="mdi:clock",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda d: d.last_communication,
+    ),
+    ObserverSensorDescription(
+        key="outdoor_unit_type",
+        name="Outdoor Unit Type",
+        icon="mdi:hvac",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: d.reported.get("odutype"),
+    ),
+    ObserverSensorDescription(
+        key="indoor_unit_type",
+        name="Indoor Unit Type",
+        icon="mdi:furnace",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: d.reported.get("idutype"),
+    ),
+    ObserverSensorDescription(
+        key="inducer_rpm",
+        name="Inducer RPM",
+        icon="mdi:fan",
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement="rpm",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: d._float("inducerrpm"),
+    ),
+    ObserverSensorDescription(
+        key="schedule_period",
+        name="Schedule Period",
+        icon="mdi:calendar-clock",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: d.reported.get("period"),
+    ),
+    ObserverSensorDescription(
+        key="hold_until",
+        name="Hold Until",
+        icon="mdi:timer-sand",
+        value_fn=lambda d: d.hold_end_text,
     ),
     # Operating status — raw value from thermostat, useful for diagnostics
     ObserverSensorDescription(

@@ -173,15 +173,16 @@ async def test_stale_status_after_push_does_not_undo_change(env):
 # ── settings confirmed through the config echo ─────────────────────
 
 
-async def test_backlight_confirmed_by_echo(env):
+async def test_backlight_confirmed_by_notification(env):
     data, tstat = await with_echo(env)
     assert data.blight == 30  # thermostat's real value
     data.set_blight(50)
     assert data.blight == 50
     assert await tstat.poll() is True
     assert tstat.last_config.findtext("blight") == "50"
-    assert data.desired == {}  # echo showed 50
+    assert data.desired == {}  # acknowledged by the notification
     assert data.blight == 50
+    assert "blight" in data.echo_xml and "<blight>50</blight>" in data.echo_xml
     assert await tstat.poll() is False
 
 
@@ -201,7 +202,7 @@ def test_hold_until_variants():
     d = ThermostatData(SERIAL, "h", clock=lambda: THURSDAY_2059)
     d.set_echo(FakeThermostat.config_echo_xml(type("S", (), {
         "status": {"hold": "off", "mode": "cool", "fan": "auto", "htsp": "60", "clsp": "64"},
-        "top": {}, "otmr": ""})()))
+        "top": {}, "otmr": "", "mode_setting": "cool"})()))
     assert d.hold_until() == "22:15"
     late = THURSDAY_2059.replace(hour=22, minute=20)  # inside the 15 min lead
     assert d.hold_until(late) == "06:15"  # tomorrow's first period
@@ -359,3 +360,69 @@ async def test_online_state_follows_check_ins(env):
     assert data.is_online is True
     data.last_communication -= datetime.timedelta(seconds=server_mod.OFFLINE_AFTER_SECONDS + 1)
     assert data.is_online is False
+
+
+# ── auto mode, notification acks, indefinite holds ─────────────────
+
+
+async def test_auto_mode_setting_comes_from_config_not_status(env):
+    data, tstat = await with_echo(env)
+    tstat.status["mode"] = "cool"
+    tstat.set_mode_setting("auto")  # wall change: status says cool, config says auto
+    await tstat.poll()
+    await tstat.post_echo()
+    assert data.reported["mode"] == "cool" and data.mode == "auto"
+
+
+async def test_pushing_auto_mode_is_confirmed_despite_status_saying_cool(env):
+    data, tstat = await with_echo(env)
+    data.set_mode("auto")
+    assert await tstat.poll() is True  # applied; status will now say "cool"
+    await tstat.poll()
+    assert data.desired == {}
+    assert data.mode == "auto" and tstat.status["mode"] == "cool"
+    assert await tstat.poll() is False  # nothing left to push
+
+
+async def test_notification_does_not_confirm_unsent_changes(env):
+    data, tstat = await with_echo(env)
+    data.set_mode("off")  # not delivered yet
+    await tstat.post_notification(["op_mode"])
+    assert "mode" in data.desired
+
+
+async def test_wall_indefinite_hold_is_preserved_when_setpoint_changes(env):
+    data, tstat = await with_echo(env)
+    tstat.status.update(mode="cool", hold="on", clsp="63")
+    tstat.otmr = ""  # indefinite, as the wall unit does it
+    await tstat.poll()
+    await tstat.post_echo()
+    assert data.hold_end_text == "Indefinite"
+    data.set_cool_setpoint(65)
+    await tstat.poll()
+    zone = zone_of(tstat.last_config)
+    assert zone.findtext("otmr") == "" and zone.findtext("clsp") == "65"
+
+
+async def test_indefinite_hold_option_sends_empty_end_time(env):
+    data, tstat = await with_echo(env)
+    tstat.status["mode"] = "cool"
+    await tstat.poll()
+    data.set_hold_indefinite(True)
+    data.set_cool_setpoint(68)
+    data.set_hold("on")
+    assert await tstat.poll() is True
+    assert zone_of(tstat.last_config).findtext("otmr") == ""
+
+
+async def test_hold_from_ha_gets_fresh_end_time_even_if_old_echo_has_none(env):
+    data, tstat = await with_echo(env)
+    tstat.status["mode"] = "cool"
+    await tstat.poll()
+    data.set_cool_setpoint(68)
+    data.set_hold("on")
+    await tstat.poll()
+    data.set_cool_setpoint(69)  # change during an HA-started hold (no echo exists)
+    await tstat.poll()
+    assert zone_of(tstat.last_config).findtext("otmr") == "22:15"
+    assert data.hold_end_text in ("Unknown", "22:15")

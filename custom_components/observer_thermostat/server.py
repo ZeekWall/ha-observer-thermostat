@@ -139,6 +139,8 @@ class ThermostatData:
 
         # HA-only setting: how long a hold lasts. 0 = until the next schedule period.
         self.otmr: int = DEFAULT_OTMR
+        # HA-only: push new holds with no end time (the wall unit's "Hold, then temp").
+        self.hold_indefinite: bool = False
 
         # Set by the integration to persist state (debounced) after changes.
         self.persist_callback: Callable[[], None] | None = None
@@ -148,6 +150,7 @@ class ThermostatData:
     def to_store(self) -> dict[str, Any]:
         return {
             "otmr": self.otmr,
+            "hold_indefinite": self.hold_indefinite,
             "last_on_mode": self.last_on_mode,
             "last_known": self.last_known,
             "firmware": self.firmware,
@@ -158,6 +161,7 @@ class ThermostatData:
         if not stored:
             return
         self.otmr = int(stored.get("otmr", self.otmr))
+        self.hold_indefinite = bool(stored.get("hold_indefinite", self.hold_indefinite))
         self.last_on_mode = stored.get("last_on_mode", self.last_on_mode)
         self.last_known = dict(stored.get("last_known", {}))
         self.firmware = stored.get("firmware", self.firmware)
@@ -196,6 +200,28 @@ class ThermostatData:
         child = config.find(tag)
         return None if child is None else (child.text or "")
 
+    def _set_echo_value(self, tag: str, value: str) -> None:
+        """Record a value the thermostat acknowledged into our copy of its config."""
+        config = self._echo_config()
+        if config is None or self._echo_root is None:
+            return
+        _set_text(config, tag, value)
+        self.echo_xml = ET.tostring(self._echo_root, encoding="unicode")
+
+    # Settings /status can't confirm; the thermostat acknowledges them with a
+    # /notifications "System settings updated" instead.
+    _NOTIFICATION_CONFIRMED = ("mode", *LOCAL_KEYS)
+
+    def acknowledge(self, change_ids: list[str]) -> None:
+        """A notification listed applied changes: confirm what we pushed for them."""
+        if not change_ids:
+            return
+        for key in self._NOTIFICATION_CONFIRMED:
+            pending = self.desired.get(key)
+            if pending is not None and pending.sent_at is not None:
+                self._set_echo_value(key, pending.value)
+                del self.desired[key]
+
     def _echo_zone(self) -> ET.Element | None:
         config = self._echo_config()
         if config is None:
@@ -233,7 +259,13 @@ class ThermostatData:
         return self.reported
 
     def observed(self, key: str) -> str | None:
-        """What the thermostat itself says the value is."""
+        """What the thermostat itself says the value is.
+
+        ``/status`` reports the *resolved* mode (``cool`` while the setting is
+        ``auto``), so the mode setting comes from the thermostat's config echo.
+        """
+        if key == "mode":
+            return self.echo_value("mode") or self.reported.get("mode")
         if key in CONTROL_KEYS:
             return self.reported.get(key)
         return self.echo_value(key)
@@ -332,6 +364,16 @@ class ThermostatData:
         return self.reported.get("opstat")
 
     @property
+    def hold_end_text(self) -> str:
+        """When the current hold ends, as reported by the thermostat's config."""
+        if self.hold != "on":
+            return "No hold"
+        zone = self._echo_zone()
+        if zone is None or zone.findtext("hold") != "on":
+            return "Unknown"
+        return (zone.findtext("otmr") or "").strip() or "Indefinite"
+
+    @property
     def hum_setpoint(self) -> int:
         return int(float(self._local("humSetpoint")))
 
@@ -400,6 +442,10 @@ class ThermostatData:
 
     def set_otmr(self, minutes: int) -> None:
         self.otmr = minutes
+        self._persist()
+
+    def set_hold_indefinite(self, indefinite: bool) -> None:
+        self.hold_indefinite = indefinite
         self._persist()
 
     # ── Push lifecycle ─────────────────────────────────────────────
@@ -539,6 +585,7 @@ class ThermostatData:
         """Zone setpoints only exist while a hold is on; mirror that."""
         keep = {c.tag: c for c in zone if c.tag in ("name", "program")}
         old_otmr = (zone.findtext("otmr") or "").strip()
+        echo_hold_on = zone.findtext("hold") == "on"  # echo only exists for wall changes
         hold = self.config_value("hold")
         for child in list(zone):
             zone.remove(child)
@@ -549,10 +596,16 @@ class ThermostatData:
         if hold == "on":
             _set_text(zone, "htsp", self.config_value("htsp"))
             _set_text(zone, "clsp", self.config_value("clsp"))
-            # An existing hold keeps its end time; a new one gets a fresh,
-            # future one (an empty/stale otmr makes the thermostat drop the hold).
-            keep_old = self.reported.get("hold") == "on" and old_otmr
-            _set_text(zone, "otmr", old_otmr if keep_old else self.hold_until())
+            # A hold the thermostat reported itself (wall unit) keeps its end,
+            # which is empty for an indefinite hold. A new hold from HA gets an
+            # explicit future end, unless indefinite holds are enabled.
+            if self.reported.get("hold") == "on" and echo_hold_on:
+                otmr = old_otmr
+            elif self.hold_indefinite:
+                otmr = ""
+            else:
+                otmr = self.hold_until()
+            _set_text(zone, "otmr", otmr)
         if "program" in keep:
             zone.append(keep["program"])
 
@@ -694,6 +747,18 @@ class ObserverThermostatServer:
             self._update_callback()
             return web.Response(status=200)
 
+        if final == "notifications":
+            self.data.raw_last[final] = body
+            try:
+                changes = [c.get("id", "") for c in ET.fromstring(body).iter("change")]
+            except ET.ParseError:
+                changes = []
+            _LOGGER.debug("Thermostat applied settings: %s", changes)
+            self.data.acknowledge(changes)
+            self.data.reconcile()
+            self._update_callback()
+            return web.Response(status=200)
+
         if final in _MERGED_ENDPOINTS:
             # odu_status / idu_status carry the outdoor/indoor unit sensors
             self.data.reported.update({k: v for k, v in received.items() if v != ""})
@@ -804,7 +869,8 @@ class ObserverThermostatServer:
         hold = d.config_value("hold")
         zone_hold = (
             f"<hold>on</hold><htsp>{d.config_value('htsp')}</htsp>"
-            f"<clsp>{d.config_value('clsp')}</clsp><otmr>{d.hold_until()}</otmr>"
+            f"<clsp>{d.config_value('clsp')}</clsp>"
+            f"<otmr>{'' if d.hold_indefinite else d.hold_until()}</otmr>"
             if hold == "on"
             else "<hold>off</hold>"
         )
