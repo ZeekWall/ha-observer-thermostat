@@ -542,3 +542,27 @@ def test_old_capture_lines_are_masked_when_read_back(tmp_path):
     c._directory = str(tmp_path)
     text = json.dumps(c.rare_from_files())
     assert "9B71D7" not in text and "ACME" not in text and "555" not in text
+
+
+async def test_pin_is_masked_in_real_urlencoded_posts(env):
+    """The thermostat sends data=<url-encoded xml>; masking must see through that."""
+    from urllib.parse import quote
+
+    _, _, tstat, capture = env
+    body = "data=" + quote("<system_profile><pin>9B71D7</pin><model>X</model></system_profile>")
+    assert await tstat.post("profile", body) == 200
+    entry = capture.entries()[-1]
+    assert "9B71D7" not in entry["req_body"] and "9B71D7" not in str(entry)
+    assert "<pin>REDACTED</pin>" in entry["req_body"] and "<model>X</model>" in entry["req_body"]
+
+
+def test_old_urlencoded_capture_lines_are_masked_when_read_back(tmp_path):
+    import json
+    from urllib.parse import quote
+
+    line = {"ts": "t", "method": "POST", "path": "/systems/S/profile", "query": "", "remote": None, "headers": {},
+            "req_body": "data=" + quote("<system_profile><pin>9B71D7</pin></system_profile>"), "status": 200, "resp_body": ""}
+    (tmp_path / "capture.jsonl").write_text(json.dumps(line) + "\n")
+    c = CaptureLog("S")
+    c._directory = str(tmp_path)
+    assert "9B71D7" not in json.dumps(c.rare_from_files())

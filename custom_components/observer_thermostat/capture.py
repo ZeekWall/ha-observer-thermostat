@@ -15,6 +15,7 @@ import queue
 import re
 import time
 from collections import deque
+from urllib.parse import unquote_plus
 from itertools import count
 from typing import Any
 
@@ -32,6 +33,11 @@ _ids = count()
 _SENSITIVE_TAGS = re.compile(
     r"<(pin|phone|email|street1|street2|scrLockoutCode)>[^<]*</\1>"
 )
+
+
+def decode_form_body(text: str) -> str:
+    """The thermostat posts ``data=<url-encoded xml>``; store the readable XML."""
+    return unquote_plus(text[5:]) if text.startswith("data=") else text
 
 
 class CaptureLog:
@@ -68,6 +74,7 @@ class CaptureLog:
         resp_body: str,
     ) -> None:
         endpoint = path.rstrip("/").split("/")[-1].lower()
+        req_body = decode_form_body(req_body)  # so tag-based masking can match
         if endpoint == "dealer":  # installer name/phone/address: never record
             req_body = "REDACTED (dealer contact details)"
         noisy_key = (method, endpoint)
@@ -161,6 +168,7 @@ class CaptureLog:
                 if endpoint in CAPTURE_NOISY_ENDPOINTS:
                     continue
                 # Lines written by older versions may predate the masking rules
+                entry["req_body"] = decode_form_body(str(entry.get("req_body", "")))
                 for field in ("path", "query", "req_body", "resp_body"):
                     entry[field] = self.redact(str(entry.get(field, "")))
                 if endpoint == "dealer":
