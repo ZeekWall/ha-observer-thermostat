@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import datetime
 import logging
 import xml.etree.ElementTree as ET
@@ -20,6 +21,9 @@ from .const import (
     DEFAULT_DEHUM_SETPOINT,
     DEFAULT_HUM_SETPOINT,
     DEFAULT_OTMR,
+    HOLD_END_LEAD_MINUTES,
+    HOLD_FALLBACK_MINUTES,
+    LOCAL_KEYS,
     MAX_PUSH_ATTEMPTS,
 )
 
@@ -32,6 +36,16 @@ _CONTROL_DEFAULTS = {
     "htsp": "70",
     "clsp": "75",
 }
+
+_LOCAL_DEFAULTS = {
+    "blight": str(DEFAULT_BLIGHT),
+    "humSetpoint": str(DEFAULT_HUM_SETPOINT),
+    "dehumSetpoint": str(DEFAULT_DEHUM_SETPOINT),
+    "scrLockout": "off",
+}
+
+# Statuses whose flat fields are merged into ``reported`` (sensor sources).
+_MERGED_ENDPOINTS = {"status", "odu_status", "idu_status"}
 
 
 def _now() -> datetime.datetime:
@@ -55,6 +69,23 @@ def decode_body(raw: str) -> str:
     return raw
 
 
+def parse_event_time(text: str, tz: datetime.tzinfo | None) -> datetime.datetime | None:
+    """Parse the thermostat's ``  7/18/26 12:07AM`` local timestamps."""
+    try:
+        parsed = datetime.datetime.strptime(" ".join(text.split()), "%m/%d/%y %I:%M%p")
+    except (ValueError, TypeError):
+        return None
+    return parsed.replace(tzinfo=tz)
+
+
+def _set_text(parent: ET.Element, tag: str, text: str) -> ET.Element:
+    child = parent.find(tag)
+    if child is None:
+        child = ET.SubElement(parent, tag)
+    child.text = text
+    return child
+
+
 @dataclass
 class PendingChange:
     """A value HA wants the thermostat to adopt, awaiting confirmation."""
@@ -68,25 +99,35 @@ class PendingChange:
 class ThermostatData:
     """Thermostat state: what it reported, and what HA wants it to become.
 
-    ``reported`` is the latest flattened ``/status`` payload. ``desired`` holds
-    only the fields HA changed and has not yet seen echoed back. Reads go through
-    ``effective()`` so the UI is optimistic and a stale status report cannot
-    overwrite a change that is still in flight.
+    ``reported`` is the flattened ``/status`` (plus odu/idu status) data.
+    ``echo_xml`` is the full config the thermostat POSTs back after applying a
+    push (``POST /systems/<serial>``); settings that ``/status`` doesn't carry
+    (backlight, humidity setpoints, lockout) are confirmed from it, and it is
+    the template for the next ``/config`` we send. ``desired`` holds only the
+    fields HA changed and has not yet seen applied.
     """
 
-    def __init__(self, serial: str, api_address: str) -> None:
+    def __init__(
+        self,
+        serial: str,
+        api_address: str,
+        clock: Callable[[], datetime.datetime] | None = None,
+    ) -> None:
         self.serial = serial
         self.api_address = api_address
+        # Thermostat-local wall clock (HA's configured time zone)
+        self.clock = clock or (lambda: datetime.datetime.now().astimezone())
 
         self.reported: dict[str, str] = {}
         self.desired: dict[str, PendingChange] = {}
-        # Last control values seen from the thermostat; survives restarts so
-        # /config is never built from hard-coded defaults.
         self.last_known: dict[str, str] = {}
         self.last_on_mode: str = "cool"
 
+        self.echo_xml: str | None = None
+        self._echo_root: ET.Element | None = None
+
         self.profile: dict[str, str] = {}
-        self.raw_last: dict[str, dict[str, str]] = {}
+        self.raw_last: dict[str, Any] = {}
         self.firmware: str | None = None
         self.thermostat_ip: str | None = None
         self.last_communication: datetime.datetime | None = None
@@ -94,13 +135,8 @@ class ThermostatData:
         self.latest_equip_description: str = "No Active Event"
         self.latest_equip_time: datetime.datetime | None = None
 
-        # Settings the thermostat never reports back; HA is the source of truth.
-        self.hum_setpoint: int = DEFAULT_HUM_SETPOINT
-        self.dehum_setpoint: int = DEFAULT_DEHUM_SETPOINT
-        self.blight: int = DEFAULT_BLIGHT
-        self.scr_lockout: bool = False
-        self.otmr: int = DEFAULT_OTMR  # minutes; 0 = permanent hold
-        self.local_dirty = False
+        # HA-only setting: how long a hold lasts. 0 = until the next schedule period.
+        self.otmr: int = DEFAULT_OTMR
 
         # Set by the integration to persist state (debounced) after changes.
         self.persist_callback: Callable[[], None] | None = None
@@ -109,31 +145,83 @@ class ThermostatData:
 
     def to_store(self) -> dict[str, Any]:
         return {
-            "hum_setpoint": self.hum_setpoint,
-            "dehum_setpoint": self.dehum_setpoint,
-            "blight": self.blight,
-            "scr_lockout": self.scr_lockout,
             "otmr": self.otmr,
             "last_on_mode": self.last_on_mode,
             "last_known": self.last_known,
             "firmware": self.firmware,
+            "echo_xml": self.echo_xml,
         }
 
     def load_store(self, stored: dict[str, Any] | None) -> None:
         if not stored:
             return
-        self.hum_setpoint = int(stored.get("hum_setpoint", self.hum_setpoint))
-        self.dehum_setpoint = int(stored.get("dehum_setpoint", self.dehum_setpoint))
-        self.blight = int(stored.get("blight", self.blight))
-        self.scr_lockout = bool(stored.get("scr_lockout", self.scr_lockout))
         self.otmr = int(stored.get("otmr", self.otmr))
         self.last_on_mode = stored.get("last_on_mode", self.last_on_mode)
         self.last_known = dict(stored.get("last_known", {}))
         self.firmware = stored.get("firmware", self.firmware)
+        if stored.get("echo_xml"):
+            self.set_echo(stored["echo_xml"])
 
     def _persist(self) -> None:
         if self.persist_callback:
             self.persist_callback()
+
+    # ── Config echo ────────────────────────────────────────────────
+
+    def set_echo(self, xml: str) -> bool:
+        """Store the thermostat's own copy of its config. False if unparseable."""
+        try:
+            root = ET.fromstring(xml)
+        except ET.ParseError as err:
+            _LOGGER.warning("Unparseable config echo from thermostat: %s", err)
+            return False
+        if root.tag != "config" and root.find("config") is None:
+            return False
+        self.echo_xml = xml
+        self._echo_root = root
+        return True
+
+    def _echo_config(self) -> ET.Element | None:
+        root = self._echo_root
+        if root is None:
+            return None
+        return root if root.tag == "config" else root.find("config")
+
+    def echo_value(self, tag: str) -> str | None:
+        config = self._echo_config()
+        if config is None:
+            return None
+        child = config.find(tag)
+        return None if child is None else (child.text or "")
+
+    def _echo_zone(self) -> ET.Element | None:
+        config = self._echo_config()
+        if config is None:
+            return None
+        for zone in config.iterfind("zones/zone"):
+            if zone.get("id") == "1":
+                return zone
+        return None
+
+    def program(self) -> dict[int, list[int]]:
+        """Schedule as ``{day id: [period start, in minutes after midnight]}``."""
+        zone = self._echo_zone()
+        out: dict[int, list[int]] = {}
+        if zone is None:
+            return out
+        for day in zone.iterfind("program/day"):
+            starts = []
+            for period in day.iterfind("period"):
+                try:
+                    hh, mm = (period.findtext("time") or "").split(":")
+                    starts.append(int(hh) * 60 + int(mm))
+                except ValueError:
+                    continue
+            try:
+                out[int(day.get("id", ""))] = sorted(starts)
+            except ValueError:
+                continue
+        return out
 
     # ── Reads ──────────────────────────────────────────────────────
 
@@ -142,11 +230,17 @@ class ThermostatData:
         """Raw last-reported values (alias kept for sensor lookups)."""
         return self.reported
 
+    def observed(self, key: str) -> str | None:
+        """What the thermostat itself says the value is."""
+        if key in CONTROL_KEYS:
+            return self.reported.get(key)
+        return self.echo_value(key)
+
     def effective(self, key: str) -> str | None:
         """Pending desired value if any, else what the thermostat reported."""
         if (pending := self.desired.get(key)) is not None:
             return pending.value
-        return self.reported.get(key)
+        return self.observed(key)
 
     def _float(self, key: str, effective: bool = False) -> float | None:
         val = self.effective(key) if effective else self.reported.get(key)
@@ -154,6 +248,9 @@ class ThermostatData:
             return float(val) if val not in (None, "") else None
         except (ValueError, TypeError):
             return None
+
+    def _local(self, key: str) -> str:
+        return self.effective(key) or _LOCAL_DEFAULTS[key]
 
     @property
     def temperature(self) -> float | None:
@@ -232,15 +329,29 @@ class ThermostatData:
     def opstat(self) -> str | None:
         return self.reported.get("opstat")
 
+    @property
+    def hum_setpoint(self) -> int:
+        return int(float(self._local("humSetpoint")))
+
+    @property
+    def dehum_setpoint(self) -> int:
+        return int(float(self._local("dehumSetpoint")))
+
+    @property
+    def blight(self) -> int:
+        return int(float(self._local("blight")))
+
+    @property
+    def scr_lockout(self) -> bool:
+        return self._local("scrLockout") == "on"
+
     # ── Mutations (commands from HA) ───────────────────────────────
 
     def set_field(self, key: str, value: str) -> None:
-        """Record a desired value; it stays pending until the thermostat echoes it."""
+        """Record a desired value; it stays pending until the thermostat shows it."""
         value = str(value)
-        if key in self.desired:
-            # Newer command supersedes the old one and gets a fresh attempt budget.
-            del self.desired[key]
-        if values_equal(self.reported.get(key), value):
+        self.desired.pop(key, None)  # newer command supersedes, fresh attempt budget
+        if values_equal(self.observed(key), value):
             return  # already the case, nothing to push
         self.desired[key] = PendingChange(value=value, set_at=_now())
         if key == "mode" and value != "off":
@@ -273,32 +384,28 @@ class ThermostatData:
             return True
         return False
 
-    def _set_local(self, attr: str, value: Any) -> None:
-        setattr(self, attr, value)
-        self.local_dirty = True
-        self._persist()
-
     def set_hum_setpoint(self, value: int) -> None:
-        self._set_local("hum_setpoint", value)
+        self.set_field("humSetpoint", str(int(value)))
 
     def set_dehum_setpoint(self, value: int) -> None:
-        self._set_local("dehum_setpoint", value)
+        self.set_field("dehumSetpoint", str(int(value)))
 
     def set_blight(self, value: int) -> None:
-        self._set_local("blight", value)
+        self.set_field("blight", str(int(value)))
 
     def set_scr_lockout(self, locked: bool) -> None:
-        self._set_local("scr_lockout", locked)
+        self.set_field("scrLockout", "on" if locked else "off")
 
     def set_otmr(self, minutes: int) -> None:
-        self._set_local("otmr", minutes)
+        self.otmr = minutes
+        self._persist()
 
     # ── Push lifecycle ─────────────────────────────────────────────
 
     @property
     def needs_push(self) -> bool:
         """True if there is anything the thermostat hasn't been told yet."""
-        return self.local_dirty or any(p.sent_at is None for p in self.desired.values())
+        return any(p.sent_at is None for p in self.desired.values())
 
     def mark_sent(self) -> None:
         """The thermostat fetched /config: start the confirmation clock."""
@@ -307,13 +414,13 @@ class ThermostatData:
             if pending.sent_at is None:
                 pending.sent_at = now
                 pending.attempts += 1
-        self.local_dirty = False
 
     def reconcile(self) -> None:
         """Drop confirmed changes, re-arm or abandon ones the thermostat ignored."""
         now = _now()
         for key, pending in list(self.desired.items()):
-            if key in self.reported and values_equal(self.reported[key], pending.value):
+            seen = self.observed(key)
+            if seen is not None and values_equal(seen, pending.value):
                 del self.desired[key]
                 continue
             if pending.sent_at is None:
@@ -327,7 +434,7 @@ class ThermostatData:
                     key,
                     pending.value,
                     pending.attempts,
-                    self.reported.get(key),
+                    seen,
                 )
                 del self.desired[key]
             else:
@@ -347,6 +454,82 @@ class ThermostatData:
             or self.last_known.get(key)
             or _CONTROL_DEFAULTS[key]
         )
+
+    # ── Hold timing ────────────────────────────────────────────────
+
+    def hold_until(self, now: datetime.datetime | None = None) -> str:
+        """``HH:MM`` the thermostat should end a new hold at.
+
+        With a configured duration, now + duration. Otherwise mimic the wall
+        unit: shortly before the next schedule period starts.
+        """
+        now = now or self.clock()
+        if self.otmr > 0:
+            return (now + datetime.timedelta(minutes=self.otmr)).strftime("%H:%M")
+
+        now_min = now.hour * 60 + now.minute
+        program = self.program()
+        today = (now.weekday() + 1) % 7 + 1  # schedule days: Sunday = 1
+        for start in program.get(today, []):
+            if start - HOLD_END_LEAD_MINUTES > now_min:
+                return self._hhmm(start - HOLD_END_LEAD_MINUTES)
+        tomorrow = program.get(today % 7 + 1, [])
+        if tomorrow:
+            return self._hhmm(tomorrow[0] - HOLD_END_LEAD_MINUTES)
+        return (now + datetime.timedelta(minutes=HOLD_FALLBACK_MINUTES)).strftime("%H:%M")
+
+    @staticmethod
+    def _hhmm(minutes: int) -> str:
+        minutes %= 1440
+        return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+    # ── /config construction ───────────────────────────────────────
+
+    def build_config(self) -> list[ET.Element] | None:
+        """The thermostat's own config with HA's pending changes applied.
+
+        Returns the child elements for a ``<config>``, or None if the thermostat
+        has never echoed its config (caller falls back to a built-in template).
+        """
+        source = self._echo_config()
+        if source is None:
+            return None
+        config = copy.deepcopy(source)
+
+        _set_text(config, "mode", self.config_value("mode"))
+        _set_text(config, "fan", self.config_value("fan"))
+        for key in LOCAL_KEYS:
+            if key in self.desired:
+                _set_text(config, key, self.desired[key].value)
+
+        zone = next((z for z in config.iterfind("zones/zone") if z.get("id") == "1"), None)
+        if zone is not None:
+            self._rebuild_zone(zone)
+
+        for child in config:
+            child.tail = None
+        return list(config)
+
+    def _rebuild_zone(self, zone: ET.Element) -> None:
+        """Zone setpoints only exist while a hold is on; mirror that."""
+        keep = {c.tag: c for c in zone if c.tag in ("name", "program")}
+        old_otmr = (zone.findtext("otmr") or "").strip()
+        hold = self.config_value("hold")
+        for child in list(zone):
+            zone.remove(child)
+
+        if "name" in keep:
+            zone.append(keep["name"])
+        _set_text(zone, "hold", hold)
+        if hold == "on":
+            _set_text(zone, "htsp", self.config_value("htsp"))
+            _set_text(zone, "clsp", self.config_value("clsp"))
+            # An existing hold keeps its end time; a new one gets a fresh,
+            # future one (an empty/stale otmr makes the thermostat drop the hold).
+            keep_old = self.reported.get("hold") == "on" and old_otmr
+            _set_text(zone, "otmr", old_otmr if keep_old else self.hold_until())
+        if "program" in keep:
+            zone.append(keep["program"])
 
 
 class ObserverThermostatServer:
@@ -400,10 +583,9 @@ class ObserverThermostatServer:
             response = await handler(request)
         except Exception:  # noqa: BLE001 — never let the thermostat see a 500
             _LOGGER.exception("Error handling %s %s", request.method, request.path)
-            final = request.path.rstrip("/").split("/")[-1]
             response = (
                 self._xml_response(self._status_xml())
-                if final == "status"
+                if self._endpoint(request.path) == "status"
                 else web.Response(status=200)
             )
         if self.capture is not None:
@@ -421,12 +603,15 @@ class ObserverThermostatServer:
 
     # ── Request handlers ───────────────────────────────────────────
 
-    @staticmethod
-    def _final_segment(path: str) -> str:
-        return path.rstrip("/").split("/")[-1]
+    def _endpoint(self, path: str) -> str:
+        """Last path segment; ``/systems/<serial>`` itself is the config echo."""
+        parts = path.rstrip("/").split("/")
+        if len(parts) >= 2 and parts[-2] == "systems" and parts[-1] == self.data.serial:
+            return "system"
+        return parts[-1]
 
     async def _handle_get(self, request: web.Request) -> web.Response:
-        final = self._final_segment(request.path)
+        final = self._endpoint(request.path)
         _LOGGER.debug("GET %s", request.path)
 
         if final.lower() == "alive":
@@ -442,8 +627,7 @@ class ObserverThermostatServer:
             return self._xml_response(xml)
 
         if final == "config":
-            # Thermostat is fetching config. Changes stay pending until a later
-            # /status shows them applied.
+            # Changes stay pending until the thermostat shows them applied.
             self.data.mark_sent()
             _LOGGER.info(
                 "Thermostat fetched config (pending: %s)",
@@ -454,11 +638,14 @@ class ObserverThermostatServer:
         return web.Response(status=200)
 
     async def _handle_post(self, request: web.Request) -> web.Response:
-        final = self._final_segment(request.path)
+        final = self._endpoint(request.path)
         body = decode_body(await request.text())
         _LOGGER.debug("POST %s body length=%s", request.path, len(body))
 
         self.data.thermostat_ip = request.remote
+
+        if final == "system":
+            return self._handle_config_echo(body)
 
         received = self._parse_xml(body, final) if body.strip() else {}
 
@@ -482,10 +669,26 @@ class ObserverThermostatServer:
             self._update_callback()
             return web.Response(status=200)
 
-        # odu_status, idu_status, idu_faults, odu_faults, history, and anything
-        # unknown: keep the latest payload for diagnostics / protocol discovery.
-        self.data.raw_last[final] = received
-        _LOGGER.debug("Endpoint %s data: %s", final, received)
+        if final in _MERGED_ENDPOINTS:
+            # odu_status / idu_status carry the outdoor/indoor unit sensors
+            self.data.reported.update({k: v for k, v in received.items() if v != ""})
+            self.data.raw_last[final] = received
+            self._update_callback()
+            return web.Response(status=200)
+
+        # notifications, faults, history, and anything unknown: keep the latest
+        # payload for diagnostics / protocol discovery.
+        self.data.raw_last[final] = body
+        _LOGGER.debug("Endpoint %s data: %s", final, body)
+        return web.Response(status=200)
+
+    def _handle_config_echo(self, body: str) -> web.Response:
+        """The thermostat reports its full config after applying a push."""
+        if self.data.set_echo(body):
+            self.data.raw_last["config_echo"] = "stored"
+            self.data.reconcile()
+            self.data._persist()
+            self._update_callback()
         return web.Response(status=200)
 
     def _handle_status(self, received: dict[str, str]) -> web.Response:
@@ -511,23 +714,12 @@ class ObserverThermostatServer:
         return self._xml_response(self._status_xml())
 
     def _handle_equipment_events(self, received: dict[str, str]) -> web.Response:
-        """Handle /equipment_events POST."""
+        """Handle /equipment_events POST (first event is the most recent)."""
         if received.get("active") == "on":
-            lt = received.get("localtime", "")
-            if lt.startswith("T"):
-                lt = lt[1:]
             self.data.latest_equip_description = received.get("description", "Unknown event")
-            # Event time is time-only from the thermostat's local clock.
-            try:
-                t = datetime.datetime.strptime(lt, "%H:%M:%S")
-                today = _now().date()
-                self.data.latest_equip_time = datetime.datetime(
-                    today.year, today.month, today.day,
-                    t.hour, t.minute, t.second,
-                    tzinfo=datetime.timezone.utc,
-                )
-            except (ValueError, TypeError):
-                self.data.latest_equip_time = _now()
+            self.data.latest_equip_time = parse_event_time(
+                received.get("localtime", ""), self.data.clock().tzinfo
+            ) or _now()
         else:
             self.data.latest_equip_description = "No Active Event"
             self.data.latest_equip_time = None
@@ -565,9 +757,7 @@ class ObserverThermostatServer:
 
     def _config_xml(self) -> str:
         d = self.data
-        scr = "on" if d.scr_lockout else "off"
-        otmr_val = str(d.otmr) if d.otmr > 0 else ""
-        return (
+        head = (
             f'<config version="1.9" xmlns:atom="http://www.w3.org/2005/Atom">'
             f'<atom:link rel="self" href="http://{d.api_address}/systems/{d.serial}/config"/>'
             f'<atom:link rel="http://{d.api_address}/rels/system"'
@@ -575,6 +765,24 @@ class ObserverThermostatServer:
             f'<atom:link rel="http://{d.api_address}/rels/dealer_config"'
             f' href="http://{d.api_address}/systems/{d.serial}/dealer_config"/>'
             f"<timestamp>{self._utcnow()}</timestamp>"
+        )
+        children = d.build_config()
+        if children is None:
+            return head + self._fallback_body() + "</config>"
+        body = "".join(ET.tostring(c, encoding="unicode") for c in children)
+        return head + body + "<utilityEvent/></config>"
+
+    def _fallback_body(self) -> str:
+        """Config used only until the thermostat has echoed its own."""
+        d = self.data
+        hold = d.config_value("hold")
+        zone_hold = (
+            f"<hold>on</hold><htsp>{d.config_value('htsp')}</htsp>"
+            f"<clsp>{d.config_value('clsp')}</clsp><otmr>{d.hold_until()}</otmr>"
+            if hold == "on"
+            else "<hold>off</hold>"
+        )
+        return (
             f"<mode>{d.config_value('mode')}</mode>"
             f"<fan>{d.config_value('fan')}</fan>"
             f"<blight>{d.blight}</blight>"
@@ -582,22 +790,12 @@ class ObserverThermostatServer:
             f"<dst>on</dst>"
             f"<volume>high</volume>"
             f"<soundType>click</soundType>"
-            f"<scrLockout>{scr}</scrLockout>"
+            f"<scrLockout>{'on' if d.scr_lockout else 'off'}</scrLockout>"
             f"<scrLockoutCode>0000</scrLockoutCode>"
             f"<humSetpoint>{d.hum_setpoint}</humSetpoint>"
             f"<dehumSetpoint>{d.dehum_setpoint}</dehumSetpoint>"
             f"<utilityEvent/>"
-            f"<zones>"
-            f'<zone id="1">'
-            f"<n>Zone 1</n>"
-            f"<hold>{d.config_value('hold')}</hold>"
-            f"<otmr>{otmr_val}</otmr>"
-            f"<htsp>{d.config_value('htsp')}</htsp>"
-            f"<clsp>{d.config_value('clsp')}</clsp>"
-            f"<program></program>"
-            f"</zone>"
-            f"</zones>"
-            f"</config>"
+            f'<zones><zone id="1"><name>Zone 1</name>{zone_hold}</zone></zones>'
         )
 
     # ── Helpers ────────────────────────────────────────────────────
@@ -613,11 +811,12 @@ class ObserverThermostatServer:
         received: dict[str, str] = {}
         first_only = endpoint == "equipment_events"  # latest event only
         for child in root.iter():
-            if len(child) or "}" in child.tag:
-                continue  # containers and namespaced (atom:link) elements
-            if first_only and child.tag in received:
-                continue
-            received[child.tag] = (child.text or "").strip()
+            if len(child) or "}" in child.tag or child.tag == "zone":
+                continue  # containers, namespaced (atom:link) and empty zone stubs
+            text = (child.text or "").strip()
+            if child.tag in received and (first_only or text == ""):
+                continue  # keep the first event / a real value over a repeat blank
+            received[child.tag] = text
         return received
 
     @staticmethod

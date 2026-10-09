@@ -45,8 +45,14 @@ async def async_get_config_entry_diagnostics(
         "stored": async_redact_data(data.to_store(), TO_REDACT),
         "profile": {k: _redact(v) for k, v in data.profile.items()},
         "raw_last": {
-            ep: {k: _redact(v) for k, v in payload.items()}
+            ep: (
+                {k: _redact(v) for k, v in payload.items()}
+                if isinstance(payload, dict)
+                else _redact(payload)
+            )
             for ep, payload in data.raw_last.items()
         },
+        "config_echo_xml": data.echo_xml,
+        "program": data.program(),
         "captures": capture.entries(200),
     }

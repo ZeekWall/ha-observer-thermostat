@@ -30,8 +30,8 @@ MAX_TEMP = 85
 
 DEFAULT_HUM_SETPOINT = 45
 DEFAULT_DEHUM_SETPOINT = 45
-DEFAULT_BLIGHT = 10
-DEFAULT_OTMR = 0  # 0 = permanent hold, >0 = minutes before reverting to schedule
+DEFAULT_BLIGHT = 30  # percent; only shown until the thermostat reports its own
+DEFAULT_OTMR = 0  # hold length in minutes; 0 = until the next schedule period
 
 KEY_RT = "rt"
 KEY_RH = "rh"
@@ -62,6 +62,15 @@ MAX_PUSH_ATTEMPTS = 3
 
 # Fields we can set and expect the thermostat to echo back in /status.
 CONTROL_KEYS = ("mode", "fan", "hold", "htsp", "clsp")
+
+# Top-level /config tags HA can change; the thermostat confirms them by echoing
+# its config (POST /systems/<serial>), not in /status.
+LOCAL_KEYS = ("blight", "humSetpoint", "dehumSetpoint", "scrLockout")
+
+# A wall-unit hold ends 15 minutes before the next schedule period (observed:
+# hold at 20:59 -> otmr 22:15 with a 22:30 period).
+HOLD_END_LEAD_MINUTES = 15
+HOLD_FALLBACK_MINUTES = 120
 
 CAPTURE_RING_SIZE = 500
 CAPTURE_FILE_MAX_BYTES = 2 * 1024 * 1024

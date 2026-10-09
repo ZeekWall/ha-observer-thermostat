@@ -11,6 +11,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.storage import Store
+from homeassistant.util import dt as dt_util
 
 from .capture import CaptureLog
 from .const import (
@@ -45,7 +46,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     local_ip = hass.config.api.local_ip
     api_address = f"{local_ip}:{port}" if port != 80 else local_ip
 
-    data = ThermostatData(serial=serial, api_address=api_address)
+    data = ThermostatData(serial=serial, api_address=api_address, clock=dt_util.now)
 
     # Restore local-only settings and last-known thermostat values
     store: Store = Store(hass, STORAGE_VERSION, f"{DOMAIN}.{serial}")

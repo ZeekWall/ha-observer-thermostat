@@ -82,7 +82,7 @@
         "name": "Backlight Brightness"
       },
       "otmr": {
-        "name": "Hold Override Timer"
+        "name": "Hold Duration"
       }
     },
     "switch": {
