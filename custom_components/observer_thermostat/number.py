@@ -33,12 +33,16 @@ class ObserverNumberDescription(NumberEntityDescription):
 
     value_fn: Callable[[ThermostatData], float]
     set_fn: Callable[[ThermostatData, float], None]
+    # False hides the control (unavailable) when the system doesn't support it
+    supported_fn: Callable[[ThermostatData], bool] = lambda d: True
 
 
 NUMBER_DESCRIPTIONS: tuple[ObserverNumberDescription, ...] = (
     ObserverNumberDescription(
         key="hum_setpoint",
         name="Humidification Setpoint",
+        entity_registry_enabled_default=False,
+        supported_fn=lambda d: d.humidifier_supported is not False,
         icon="mdi:water-plus",
         native_min_value=20,
         native_max_value=65,
@@ -51,6 +55,7 @@ NUMBER_DESCRIPTIONS: tuple[ObserverNumberDescription, ...] = (
     ObserverNumberDescription(
         key="dehum_setpoint",
         name="Dehumidification Setpoint",
+        entity_registry_enabled_default=False,
         icon="mdi:water-minus",
         native_min_value=20,
         native_max_value=65,
@@ -119,6 +124,10 @@ class ObserverNumberEntity(ObserverEntity, NumberEntity):
         super().__init__(data, device_name, serial)
         self.entity_description = description
         self._attr_unique_id = f"{serial}_{description.key}"
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.entity_description.supported_fn(self._data)
 
     @property
     def native_value(self) -> float:

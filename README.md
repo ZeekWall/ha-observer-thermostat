@@ -39,7 +39,7 @@ still being delivered.
 | Sensor | Temperature, Humidity, Operating Mode, Fan Mode, State, Setpoint, Fan Status, Hold, **Hold Until**, **Next Schedule Change** (time, with the heat/cool setpoints as attributes), **Equipment Stage**, Filter Life Remaining, Outdoor Ambient/Coil Temperature, Indoor CFM, Operating Status, Active Equipment Event (+ time), **Last Fault** (full fault history in its attributes), Last Communication, Outdoor/Indoor Unit Type, Inducer RPM, Schedule Period |
 | Diagnostic sensors (disabled by default) | Deadband, Changeover Setting, Cool/Heat Lockout Setting, Room Temperature Offset, Filter Interval, Indoor/Outdoor Unit Capacity, Indoor Unit Stages, Service Level, Schedule Day — read from the installer configuration the thermostat reports; shown raw |
 | Binary sensor | Filter Service Needed, Indoor Unit Lockout |
-| Number | Backlight Brightness (%), Humidification / Dehumidification Setpoint, **Hold Duration** |
+| Number | Backlight Brightness (%), **Hold Duration**; Humidification / Dehumidification Setpoint (disabled by default; humidification is unavailable when the installer settings say humidity control is off) |
 | Switch | Screen Lockout, **Indefinite Hold** |
 
 ### Holds
@@ -76,7 +76,7 @@ than applied later. The thermostat's own schedule is never modified.
   schedule resume. **Not yet verified from HA:** Heat and Heat/Cool modes, Med/High fan,
   the Indefinite Hold switch, and the backlight / humidity / lockout writes.
 * Weather, history and fault reports are not handled; they have not been observed yet.
-* Humidifier/dehumidifier controls are exposed but have no effect on a system without one.
+* Humidity setpoints are untested and likely do nothing without humidity equipment enabled by the installer; they are disabled by default. The 20–65 % range is a guess.
 
 ## Requirements
 

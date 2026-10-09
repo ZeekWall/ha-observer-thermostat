@@ -442,6 +442,12 @@ class ThermostatData:
         return self._config_number(getattr(self, source), key)
 
     @property
+    def humidifier_supported(self) -> bool | None:
+        """Installer setting for humidity control; None until the thermostat reports it."""
+        value = self.dealer_config.get("cfghumid")
+        return None if value is None else value == "on"
+
+    @property
     def last_fault_text(self) -> str | None:
         return self.equipment_history[0].get("description") if self.equipment_history else None
 

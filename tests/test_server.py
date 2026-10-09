@@ -488,3 +488,12 @@ async def test_sensitive_details_are_masked_in_captures(env):
     bodies = " ".join(e["req_body"] for e in capture.entries())
     assert "9B71D7" not in bodies and "ACME" not in bodies and "555-0100" not in bodies
     assert "<model>X</model>" in bodies  # non-sensitive content survives
+
+
+def test_humidifier_support_follows_installer_setting():
+    d = ThermostatData(SERIAL, "h")
+    assert d.humidifier_supported is None  # unknown until the thermostat reports
+    d.dealer_config = {"cfghumid": "off"}
+    assert d.humidifier_supported is False
+    d.dealer_config = {"cfghumid": "on"}
+    assert d.humidifier_supported is True
