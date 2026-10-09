@@ -12,11 +12,18 @@ import logging
 import logging.handlers
 import os
 import queue
+import time
 from collections import deque
 from itertools import count
 from typing import Any
 
-from .const import CAPTURE_FILE_BACKUPS, CAPTURE_FILE_MAX_BYTES, CAPTURE_RING_SIZE
+from .const import (
+    CAPTURE_FILE_BACKUPS,
+    CAPTURE_FILE_MAX_BYTES,
+    CAPTURE_HEARTBEAT_SECONDS,
+    CAPTURE_NOISY_ENDPOINTS,
+    CAPTURE_RING_SIZE,
+)
 
 _SAFE_HEADERS = ("content-type", "content-length", "user-agent", "host")
 _ids = count()
@@ -28,6 +35,8 @@ class CaptureLog:
     def __init__(self, serial: str, maxlen: int = CAPTURE_RING_SIZE) -> None:
         self._serial = serial
         self._ring: deque[dict[str, Any]] = deque(maxlen=maxlen)
+        # last recorded entry (and its monotonic time) per noisy (method, endpoint)
+        self._last_noisy: dict[tuple[str, str], tuple[dict[str, Any], float]] = {}
         self._logger: logging.Logger | None = None
         self._queue_handler: logging.handlers.QueueHandler | None = None
         self._listener: logging.handlers.QueueListener | None = None
@@ -50,6 +59,23 @@ class CaptureLog:
         status: int,
         resp_body: str,
     ) -> None:
+        endpoint = path.rstrip("/").split("/")[-1].lower()
+        noisy_key = (method, endpoint)
+        now = time.monotonic()
+        if endpoint in CAPTURE_NOISY_ENDPOINTS:
+            previous = self._last_noisy.get(noisy_key)
+            if (
+                previous is not None
+                and previous[0]["req_body"] == self.redact(req_body)
+                and previous[0]["status"] == status
+                and now - previous[1] < CAPTURE_HEARTBEAT_SECONDS
+            ):
+                previous[0]["repeats"] = previous[0].get("repeats", 0) + 1
+                previous[0]["last_repeat"] = datetime.datetime.now(
+                    datetime.timezone.utc
+                ).isoformat()
+                return
+
         entry = {
             "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "method": method,
@@ -64,6 +90,8 @@ class CaptureLog:
             "resp_body": self.redact(resp_body),
         }
         self._ring.append(entry)
+        if endpoint in CAPTURE_NOISY_ENDPOINTS:
+            self._last_noisy[noisy_key] = (entry, now)
         if self._logger is not None:
             self._logger.info(json.dumps(entry, separators=(",", ":")))
 

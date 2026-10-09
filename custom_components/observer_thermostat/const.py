@@ -59,6 +59,11 @@ MONITORED_KEYS = [
 # otherwise it is re-pushed (up to MAX_PUSH_ATTEMPTS times, then dropped).
 CONFIRM_GRACE_SECONDS = 90
 MAX_PUSH_ATTEMPTS = 3
+# A change not delivered this quickly means the thermostat is offline; drop it
+# rather than surprise-apply it on reconnect.
+PENDING_MAX_AGE_SECONDS = 180
+# The thermostat polls every ~4s with occasional gaps of up to ~95s.
+OFFLINE_AFTER_SECONDS = 300
 
 # Fields we can set and expect the thermostat to echo back in /status.
 CONTROL_KEYS = ("mode", "fan", "hold", "htsp", "clsp")
@@ -72,7 +77,11 @@ LOCAL_KEYS = ("blight", "humSetpoint", "dehumSetpoint", "scrLockout")
 HOLD_END_LEAD_MINUTES = 15
 HOLD_FALLBACK_MINUTES = 120
 
-CAPTURE_RING_SIZE = 500
+CAPTURE_RING_SIZE = 1000
+# Chatty polling endpoints are only recorded when their content changes, or
+# once per heartbeat, so rare endpoints (weather, history, faults) stay visible.
+CAPTURE_NOISY_ENDPOINTS = ("status", "odu_status", "idu_status", "equipment_events", "alive", "time")
+CAPTURE_HEARTBEAT_SECONDS = 600
 CAPTURE_FILE_MAX_BYTES = 2 * 1024 * 1024
 CAPTURE_FILE_BACKUPS = 5
 CAPTURE_DIR_NAME = "observer_thermostat/captures"

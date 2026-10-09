@@ -10,5 +10,5 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/aneisch/thermostat_api_server_docker/issues",
   "requirements": [],
-  "version": "1.2.0-dev2"
+  "version": "1.2.0-dev3"
 }

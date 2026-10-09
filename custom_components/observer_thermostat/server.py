@@ -25,6 +25,8 @@ from .const import (
     HOLD_FALLBACK_MINUTES,
     LOCAL_KEYS,
     MAX_PUSH_ATTEMPTS,
+    OFFLINE_AFTER_SECONDS,
+    PENDING_MAX_AGE_SECONDS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -407,6 +409,29 @@ class ThermostatData:
         """True if there is anything the thermostat hasn't been told yet."""
         return any(p.sent_at is None for p in self.desired.values())
 
+    def expire_unsent(self) -> None:
+        """Drop commands that were never delivered because the thermostat was away."""
+        now = _now()
+        for key, pending in list(self.desired.items()):
+            if (
+                pending.sent_at is None
+                and (now - pending.set_at).total_seconds() > PENDING_MAX_AGE_SECONDS
+            ):
+                _LOGGER.warning(
+                    "Dropping %s=%s: thermostat did not check in for %ss",
+                    key,
+                    pending.value,
+                    PENDING_MAX_AGE_SECONDS,
+                )
+                del self.desired[key]
+
+    @property
+    def is_online(self) -> bool:
+        """True if the thermostat has contacted us recently."""
+        if self.last_communication is None:
+            return False
+        return (_now() - self.last_communication).total_seconds() < OFFLINE_AFTER_SECONDS
+
     def mark_sent(self) -> None:
         """The thermostat fetched /config: start the confirmation clock."""
         now = _now()
@@ -703,6 +728,7 @@ class ObserverThermostatServer:
         if (mode := received.get("mode")) not in (None, "", "off"):
             data.last_on_mode = mode
 
+        data.expire_unsent()
         data.reconcile()
         data.last_communication = _now()
         data._persist()

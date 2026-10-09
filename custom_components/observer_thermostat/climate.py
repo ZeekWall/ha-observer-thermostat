@@ -13,9 +13,7 @@ from homeassistant.components.climate import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
@@ -27,8 +25,8 @@ from .const import (
     MIN_TEMP,
     PRESET_HOLD,
     PRESET_SCHEDULE,
-    SIGNAL_THERMOSTAT_UPDATE,
 )
+from .entity import ObserverEntity
 from .server import ThermostatData
 
 _LOGGER = logging.getLogger(__name__)
@@ -67,10 +65,9 @@ async def async_setup_entry(
     async_add_entities([ObserverClimateEntity(data, name, serial)])
 
 
-class ObserverClimateEntity(ClimateEntity):
+class ObserverClimateEntity(ObserverEntity, ClimateEntity):
     """Representation of an Observer Communicating Thermostat."""
 
-    _attr_has_entity_name = True
     _attr_name = None  # Use device name as the entity name
     _attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
     _attr_hvac_modes = [HVACMode.OFF, HVACMode.COOL, HVACMode.HEAT, HVACMode.HEAT_COOL]
@@ -89,29 +86,8 @@ class ObserverClimateEntity(ClimateEntity):
     )
 
     def __init__(self, data: ThermostatData, name: str, serial: str) -> None:
-        self._data = data
-        self._serial = serial
+        super().__init__(data, name, serial)
         self._attr_unique_id = serial
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, serial)},
-            name=name,
-            manufacturer="Observer",
-            model="TSTAT0201CW",
-            sw_version=data.firmware,
-        )
-
-    async def async_added_to_hass(self) -> None:
-        self.async_on_remove(
-            async_dispatcher_connect(
-                self.hass,
-                f"{SIGNAL_THERMOSTAT_UPDATE}_{self._serial}",
-                self._handle_update,
-            )
-        )
-
-    @callback
-    def _handle_update(self) -> None:
-        self.async_write_ha_state()
 
     # ── State properties ───────────────────────────────────────────
 
@@ -129,6 +105,8 @@ class ObserverClimateEntity(ClimateEntity):
 
     @property
     def hvac_action(self) -> HVACAction:
+        if self._data.mode == "off":
+            return HVACAction.OFF
         return ACTION_MAP.get(self._data.hvac_action, HVACAction.IDLE)
 
     @property

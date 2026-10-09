@@ -302,3 +302,60 @@ def test_values_equal():
     assert not values_equal("75", "76")
     assert not values_equal(None, "75")
     assert values_equal("heat", "heat")
+
+
+# ── capture volume, stale commands, online state ───────────────────
+
+
+def _add(c, method="POST", path="/systems/S/status", body="a", status=200):
+    c.add(method=method, path=path, query="", remote=None, headers={}, req_body=body, status=status, resp_body="")
+
+
+def test_capture_collapses_repeated_heartbeats_but_keeps_rare_endpoints():
+    c = CaptureLog("S", maxlen=100)
+    for _ in range(50):
+        _add(c)  # identical status polls
+    _add(c, body="b")  # content changed
+    for _ in range(5):
+        _add(c, path="/systems/S/weather", method="GET", body="")  # not noisy
+    entries = c.entries()
+    assert [e["req_body"] for e in entries if e["path"].endswith("status")] == ["a", "b"]
+    assert entries[0]["repeats"] == 49
+    assert sum(e["path"].endswith("weather") for e in entries) == 5
+
+
+def test_capture_heartbeat_records_unchanged_polls_periodically(monkeypatch):
+    from observer_thermostat import capture as capture_mod
+
+    clock = [1000.0]
+    monkeypatch.setattr(capture_mod.time, "monotonic", lambda: clock[0])
+    c = CaptureLog("S", maxlen=100)
+    _add(c)
+    clock[0] += capture_mod.CAPTURE_HEARTBEAT_SECONDS + 1
+    _add(c)
+    assert len(c.entries()) == 2
+
+
+async def test_changes_queued_while_offline_are_dropped_not_replayed(env):
+    data, _, tstat, _ = env
+    await tstat.poll()
+    data.set_mode("off")
+    data.desired["mode"].set_at -= datetime.timedelta(seconds=server_mod.PENDING_MAX_AGE_SECONDS + 1)
+    assert await tstat.poll() is False  # stale command is dropped, nothing pushed
+    assert data.desired == {} and tstat.status["mode"] == "heat"
+
+
+async def test_recent_unsent_changes_are_still_delivered(env):
+    data, _, tstat, _ = env
+    await tstat.poll()
+    data.set_fan_mode("low")
+    assert await tstat.poll() is True
+
+
+async def test_online_state_follows_check_ins(env):
+    data, _, tstat, _ = env
+    assert data.is_online is False
+    await tstat.poll()
+    assert data.is_online is True
+    data.last_communication -= datetime.timedelta(seconds=server_mod.OFFLINE_AFTER_SECONDS + 1)
+    assert data.is_online is False

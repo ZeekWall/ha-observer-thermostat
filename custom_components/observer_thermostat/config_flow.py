@@ -13,7 +13,6 @@ from homeassistant.config_entries import (
     OptionsFlow,
 )
 from homeassistant.core import callback
-from homeassistant.helpers import network
 
 from .const import (
     CONF_CAPTURE_TO_FILE,
