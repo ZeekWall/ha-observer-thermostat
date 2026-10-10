@@ -36,7 +36,7 @@ still being delivered.
 
 | Platform | Entities |
 |---|---|
-| Sensor | Temperature, Humidity, Operating Mode, Fan Mode, State, Setpoint, Fan Status, Hold, **Hold Until**, **Next Schedule Change** (time, with the heat/cool setpoints as attributes), **Equipment Stage**, Filter Life Remaining, Outdoor Ambient/Coil Temperature, Indoor CFM, Operating Status, Active Equipment Event (+ time), **Last Fault** (full fault history in its attributes), **Cooling Runtime / Cycles (Lifetime)** (daily lifetime counters from the outdoor unit; use them with a utility meter for compressor runtime per day), Last Communication, Outdoor/Indoor Unit Type, Inducer RPM, Schedule Period |
+| Sensor | Temperature, Humidity, Operating Mode, Fan Mode, State, Setpoint, Fan Status, Hold, **Hold Until**, **Next Schedule Change** (time, with the heat/cool setpoints as attributes), **Equipment Stage**, Filter Life Remaining, Outdoor Ambient/Coil Temperature, Indoor CFM, Operating Status, Active Equipment Event (+ time), **Last Fault** (full fault history in its attributes), **Cooling Runtime / Cycles (Lifetime)** (lifetime counters from the outdoor unit, refreshed whenever the thermostat reconnects; they are whole hours, so they suit long-term totals more than daily runtime), Last Communication, Outdoor/Indoor Unit Type, Inducer RPM, Schedule Period |
 | Diagnostic sensors (disabled by default) | Deadband, Changeover Setting, Cool/Heat Lockout Setting, Room Temperature Offset, Filter Interval, Indoor/Outdoor Unit Capacity, Indoor Unit Stages, Service Level, Schedule Day — read from the installer configuration the thermostat reports; shown raw |
 | Binary sensor | Filter Service Needed, Indoor Unit Lockout |
 | Number | Backlight Brightness (%), **Hold Duration**; Humidification / Dehumidification Setpoint (disabled by default; humidification is unavailable when the installer settings say humidity control is off) |
@@ -75,7 +75,7 @@ than applied later. The thermostat's own schedule is never modified.
 * Verified: Cool and Off modes, Auto fan / Low fan, holds with and without an end time,
   schedule resume. **Not yet verified from HA:** Heat and Heat/Cool modes, Med/High fan,
   the Indefinite Hold switch, and the backlight / humidity / lockout writes.
-* Weather, history and fault reports are not handled; they have not been observed yet.
+* The thermostat never requested weather in 23 hours of capture, so weather is not implemented. The installer settings, lifetime history and fault lists are only sent when the thermostat (re)connects, so the related sensors fill in after the first reconnect following an install.
 * Humidity setpoints are untested and likely do nothing without humidity equipment enabled by the installer; they are disabled by default. The 20–65 % range is a guess.
 
 ## Requirements
